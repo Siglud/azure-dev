@@ -19,12 +19,14 @@ import (
 	"github.com/azure/azure-dev/cli/azd/pkg/environment/azdcontext"
 	"github.com/azure/azure-dev/cli/azd/pkg/exec"
 	"github.com/azure/azure-dev/cli/azd/pkg/ext"
+	"github.com/azure/azure-dev/cli/azd/pkg/ioc"
 	"github.com/azure/azure-dev/cli/azd/pkg/project"
 	"github.com/azure/azure-dev/cli/azd/pkg/tools/language"
 	"github.com/azure/azure-dev/cli/azd/test/mocks"
 	"github.com/azure/azure-dev/cli/azd/test/mocks/mockenv"
 	"github.com/azure/azure-dev/cli/azd/test/mocks/mocktools"
 	"github.com/azure/azure-dev/cli/azd/test/ostest"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -377,6 +379,58 @@ func Test_ServiceHooks_ValidationUsesServicePath(t *testing.T) {
 	require.Equal(t, expectedShell, executedShell)
 }
 
+func Test_DeployPreview_SkipsProjectAndServiceHooks(t *testing.T) {
+	mockContext := mocks.NewMockContext(t.Context())
+	registerHookExecutors(mockContext)
+
+	previewFlags := pflag.NewFlagSet("deploy", pflag.ContinueOnError)
+	previewFlags.Bool("preview", false, "")
+	require.NoError(t, previewFlags.Set("preview", "true"))
+	runOptions := Options{
+		CommandPath: "azd deploy",
+		Flags:       previewFlags,
+	}
+	projectConfig := createServiceHookProjectConfig(t, "predeploy")
+	projectConfig.Hooks = map[string][]*ext.HookConfig{
+		"predeploy":  {{Run: "echo project-predeploy", Shell: string(language.HookKindBash)}},
+		"postdeploy": {{Run: "echo project-postdeploy", Shell: string(language.HookKindBash)}},
+	}
+
+	hookCount := 0
+	mockContext.CommandRunner.When(func(exec.RunArgs, string) bool {
+		return true
+	}).RespondFn(func(exec.RunArgs) (exec.RunResult, error) {
+		hookCount++
+		return exec.NewRunResult(0, "", ""), nil
+	})
+	nextFn, actionRan := createNextFn()
+
+	result, err := runMiddleware(
+		mockContext,
+		"test",
+		projectConfig,
+		&runOptions,
+		nextFn,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, *actionRan)
+	require.Zero(t, hookCount)
+	service := projectConfig.Services["api"]
+	require.NoError(t, service.Invoke(
+		t.Context(),
+		project.ServiceEventDeploy,
+		project.ServiceLifecycleEventArgs{
+			Project:        projectConfig,
+			Service:        service,
+			ServiceContext: project.NewServiceContext(),
+		},
+		func() error { return nil },
+	))
+	require.Zero(t, hookCount, "preview must not register service hooks that can run later")
+}
+
 func createAzdContext(t *testing.T) *azdcontext.AzdContext {
 	tempDir := t.TempDir()
 	ostest.Chdir(t, tempDir)
@@ -442,10 +496,10 @@ func runMiddlewareWithContext(
 	envManager := &mockenv.MockEnvManager{}
 	envManager.On("Save", mock.Anything, mock.Anything).Return(nil)
 	envManager.On("Reload", mock.Anything, mock.Anything).Return(nil)
+	ioc.RegisterInstance(mockContext.Container, env)
 
 	middleware := NewHooksMiddleware(
 		envManager,
-		env,
 		projectConfig,
 		project.NewImportManager(nil),
 		mockContext.CommandRunner,

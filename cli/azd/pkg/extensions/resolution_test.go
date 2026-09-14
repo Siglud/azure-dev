@@ -561,3 +561,12 @@ func TestClassifyInstallResolution_ProviderUsesSelectedRelease(t *testing.T) {
 		require.Nil(t, result.Error())
 	})
 }
+
+func TestProviderTypeForServiceTargetPreviewCapability(t *testing.T) {
+	t.Parallel()
+
+	providerType, required := ProviderTypeForCapability(ServiceTargetPreviewCapability)
+
+	require.True(t, required)
+	require.Equal(t, ServiceTargetProviderType, providerType)
+}

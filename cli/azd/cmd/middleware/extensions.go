@@ -29,6 +29,7 @@ var (
 	listenCapabilities = []extensions.CapabilityType{
 		extensions.LifecycleEventsCapability,
 		extensions.ServiceTargetProviderCapability,
+		extensions.ServiceTargetPreviewCapability,
 		extensions.FrameworkServiceProviderCapability,
 		extensions.ProvisioningProviderCapability,
 		extensions.ValidationProviderCapability,

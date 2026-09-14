@@ -96,6 +96,7 @@ overrides:
           - userinfo
     - filename: docs/architecture/**/*.md
       words:
+          - azdext
           - azapi
           - appinsights
           - Errorf

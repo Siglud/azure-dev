@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,15 +21,19 @@ import (
 	"github.com/azure/azure-dev/cli/azd/pkg/alpha"
 	"github.com/azure/azure-dev/cli/azd/pkg/apphost"
 	"github.com/azure/azure-dev/cli/azd/pkg/azapi"
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/azure/azure-dev/cli/azd/pkg/cloud"
 	"github.com/azure/azure-dev/cli/azd/pkg/environment"
 	"github.com/azure/azure-dev/cli/azd/pkg/environment/azdcontext"
 	"github.com/azure/azure-dev/cli/azd/pkg/exec"
 	"github.com/azure/azure-dev/cli/azd/pkg/exegraph"
 	"github.com/azure/azure-dev/cli/azd/pkg/input"
+	"github.com/azure/azure-dev/cli/azd/pkg/ioc"
+	"github.com/azure/azure-dev/cli/azd/pkg/lazy"
 	"github.com/azure/azure-dev/cli/azd/pkg/output"
 	"github.com/azure/azure-dev/cli/azd/pkg/output/ux"
 	"github.com/azure/azure-dev/cli/azd/pkg/project"
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -36,6 +41,7 @@ import (
 type DeployFlags struct {
 	ServiceName string
 	All         bool
+	Preview     bool
 	Timeout     int
 	fromPackage string
 	flagSet     *pflag.FlagSet
@@ -75,6 +81,12 @@ func (d *DeployFlags) bindCommon(local *pflag.FlagSet, global *internal.GlobalCo
 		"all",
 		false,
 		"Deploys all services that are listed in "+azdcontext.ProjectFileName,
+	)
+	local.BoolVar(
+		&d.Preview,
+		"preview",
+		false,
+		"Preview deployment changes without applying them (currently supported for Microsoft Foundry hosted agents).",
 	)
 	local.StringVar(
 		&d.fromPackage,
@@ -123,6 +135,10 @@ func (d *DeployFlags) timeoutChanged() bool {
 	return timeoutFlag != nil && timeoutFlag.Changed
 }
 
+func (d *DeployFlags) fromPackageChanged() bool {
+	return d.flagSet != nil && d.flagSet.Changed("from-package")
+}
+
 func NewDeployCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy <service>",
@@ -152,6 +168,9 @@ type DeployAction struct {
 	commandRunner       exec.CommandRunner
 	alphaFeatureManager *alpha.FeatureManager
 	importManager       *project.ImportManager
+	lazyServiceManager  *lazy.Lazy[project.ServiceManager]
+	lazyResourceManager *lazy.Lazy[project.ResourceManager]
+	serviceLocator      ioc.ServiceLocator
 	progressTracker     *deployProgressTracker // set at runtime when using parallel deployment graph
 }
 
@@ -159,11 +178,9 @@ func NewDeployAction(
 	flags *DeployFlags,
 	args []string,
 	projectConfig *project.ProjectConfig,
-	projectManager project.ProjectManager,
-	serviceManager project.ServiceManager,
-	resourceManager project.ResourceManager,
 	azdCtx *azdcontext.AzdContext,
-	environment *environment.Environment,
+	lazyServiceManager *lazy.Lazy[project.ServiceManager],
+	lazyResourceManager *lazy.Lazy[project.ResourceManager],
 	envManager environment.Manager,
 	accountManager account.Manager,
 	cloud *cloud.Cloud,
@@ -174,17 +191,16 @@ func NewDeployAction(
 	writer io.Writer,
 	alphaFeatureManager *alpha.FeatureManager,
 	importManager *project.ImportManager,
+	serviceLocator ioc.ServiceLocator,
 ) actions.Action {
 	return &DeployAction{
 		flags:               flags,
 		args:                args,
 		projectConfig:       projectConfig,
 		azdCtx:              azdCtx,
-		env:                 environment,
+		lazyServiceManager:  lazyServiceManager,
+		lazyResourceManager: lazyResourceManager,
 		envManager:          envManager,
-		projectManager:      projectManager,
-		serviceManager:      serviceManager,
-		resourceManager:     resourceManager,
 		accountManager:      accountManager,
 		portalUrlBase:       cloud.PortalUrlBase,
 		azCli:               azCli,
@@ -194,6 +210,7 @@ func NewDeployAction(
 		commandRunner:       commandRunner,
 		alphaFeatureManager: alphaFeatureManager,
 		importManager:       importManager,
+		serviceLocator:      serviceLocator,
 	}
 }
 
@@ -202,28 +219,65 @@ type DeploymentResult struct {
 	Services  map[string]*project.ServiceDeployResult `json:"services"`
 }
 
+type DeploymentPreviewResult struct {
+	Timestamp time.Time                               `json:"timestamp"`
+	Services  map[string]*azdext.ServiceTargetPreview `json:"services"`
+}
+
+type deployPreviewTarget struct {
+	service   *project.ServiceConfig
+	previewer project.ServiceTargetPreviewer
+}
+
 func (da *DeployAction) Run(ctx context.Context) (*actions.ActionResult, error) {
+	if da.flags.Preview {
+		switch {
+		case da.flags.fromPackageChanged():
+			return nil, fmt.Errorf(
+				"--from-package cannot be used with --preview: %w",
+				internal.ErrInvalidFlagCombination,
+			)
+		case da.flags.timeoutChanged():
+			return nil, fmt.Errorf(
+				"--timeout cannot be used with --preview: %w",
+				internal.ErrInvalidFlagCombination,
+			)
+		}
+	}
+
+	if err := da.loadEnvironment(ctx); err != nil {
+		return nil, err
+	}
+
 	targetServiceName := da.flags.ServiceName
 	if len(da.args) == 1 {
 		targetServiceName = da.args[0]
 	}
 
-	if da.env.GetSubscriptionId() == "" {
+	if !da.flags.Preview && da.env.GetSubscriptionId() == "" {
 		return nil, &internal.ErrorWithSuggestion{
 			Err:        internal.ErrInfraNotProvisioned,
 			Suggestion: "Run 'azd provision' to set up infrastructure before deploying.",
 		}
 	}
 
-	targetServiceName, err := getTargetServiceName(
-		ctx,
-		da.projectManager,
-		da.importManager,
-		da.projectConfig,
-		string(project.ServiceEventDeploy),
-		targetServiceName,
-		da.flags.All,
-	)
+	var err error
+	if da.flags.Preview {
+		targetServiceName, err = da.getPreviewTargetServiceName(ctx, targetServiceName)
+	} else {
+		if err := da.loadManagers(); err != nil {
+			return nil, err
+		}
+		targetServiceName, err = getTargetServiceName(
+			ctx,
+			da.projectManager,
+			da.importManager,
+			da.projectConfig,
+			string(project.ServiceEventDeploy),
+			targetServiceName,
+			da.flags.All,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +302,19 @@ func (da *DeployAction) Run(ctx context.Context) (*actions.ActionResult, error) 
 		return nil, err
 	}
 
+	if da.flags.Preview {
+		previewTargets, err := da.resolvePreviewTargets(ctx, stableServices)
+		if err != nil {
+			return nil, err
+		}
+		for _, target := range previewTargets {
+			if err := target.previewer.InitializePreview(ctx, target.service, da.env); err != nil {
+				return nil, fmt.Errorf("initializing service target for %q: %w", target.service.Name, err)
+			}
+		}
+		return da.previewServices(ctx, previewTargets)
+	}
+
 	if err := da.projectManager.InitializeServices(ctx, stableServices); err != nil {
 		return nil, err
 	}
@@ -267,6 +334,344 @@ func (da *DeployAction) Run(ctx context.Context) (*actions.ActionResult, error) 
 	// any service count (including N=1) with a uniform progress tracker
 	// and the same package → publish → deploy step topology.
 	return da.deployServicesGraph(ctx, stableServices, startTime)
+}
+
+func (da *DeployAction) loadEnvironment(ctx context.Context) error {
+	if da.env != nil {
+		return nil
+	}
+	if da.flags.Preview {
+		environmentName := da.flags.EnvironmentName
+		if environmentName == "" {
+			var err error
+			environmentName, err = da.azdCtx.GetDefaultEnvironmentName()
+			if err != nil {
+				return &internal.ErrorWithSuggestion{
+					Err:        fmt.Errorf("deployment preview requires an existing environment: %w", err),
+					Suggestion: "Run 'azd env new <name>' before previewing deployment changes.",
+				}
+			}
+		}
+		if !isSafePreviewEnvironmentName(environmentName) {
+			return &internal.ErrorWithSuggestion{
+				Err: fmt.Errorf(
+					"invalid environment name %q for deployment preview: %w",
+					environmentName,
+					internal.ErrInvalidFlagCombination,
+				),
+				Suggestion: "Use an existing environment name without path separators, '.' or '..'.",
+			}
+		}
+		env, err := da.loadPreviewEnvironment(environmentName)
+		if err != nil {
+			return &internal.ErrorWithSuggestion{
+				Err: fmt.Errorf(
+					"deployment preview requires an existing environment: %w",
+					err,
+				),
+				Suggestion: "Run 'azd env new <name>' before previewing deployment changes.",
+			}
+		}
+		if name, found := env.LookupEnv(environment.EnvNameEnvVarName); !found || name != environmentName {
+			env.DotenvSet(environment.EnvNameEnvVarName, environmentName)
+		}
+		da.env = env
+		return nil
+	}
+
+	if err := da.serviceLocator.Resolve(&da.env); err != nil {
+		return fmt.Errorf("loading environment: %w", err)
+	}
+	return nil
+}
+
+func (da *DeployAction) loadPreviewEnvironment(name string) (*environment.Environment, error) {
+	root := da.azdCtx.EnvironmentRoot(name)
+	rootInfo, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, environment.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect environment %q: %w", name, err)
+	}
+	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("environment %q is not a regular directory", name)
+	}
+
+	envPath := filepath.Join(root, environment.DotEnvFileName)
+	envInfo, err := os.Lstat(envPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return environment.NewWithValues(name, map[string]string{}), nil
+	case err != nil:
+		return nil, fmt.Errorf("inspect environment values for %q: %w", name, err)
+	case envInfo.Mode()&os.ModeSymlink != 0 || !envInfo.Mode().IsRegular():
+		return nil, fmt.Errorf("environment values for %q are not a regular file", name)
+	}
+
+	values, err := godotenv.Read(envPath)
+	if err != nil {
+		return nil, fmt.Errorf("read environment values for %q: %w", name, err)
+	}
+	return environment.NewWithValues(name, values), nil
+}
+
+func isSafePreviewEnvironmentName(name string) bool {
+	return environment.IsValidEnvironmentName(name) &&
+		name != "." &&
+		name != ".." &&
+		!strings.ContainsAny(name, `/\`)
+}
+
+func (da *DeployAction) loadManagers() error {
+	if da.projectManager != nil && da.serviceManager != nil &&
+		da.lazyResourceManager == nil {
+		return nil
+	}
+	if da.serviceManager == nil {
+		serviceManager, err := da.lazyServiceManager.GetValue()
+		if err != nil {
+			return fmt.Errorf("loading service manager: %w", err)
+		}
+		da.serviceManager = serviceManager
+	}
+	if da.resourceManager == nil {
+		resourceManager, err := da.lazyResourceManager.GetValue()
+		if err != nil {
+			return fmt.Errorf("loading resource manager: %w", err)
+		}
+		da.resourceManager = resourceManager
+	}
+	if da.projectManager == nil {
+		da.projectManager = project.NewProjectManager(
+			da.azdCtx,
+			da.serviceManager,
+			da.importManager,
+		)
+	}
+	return nil
+}
+
+func (da *DeployAction) getPreviewTargetServiceName(
+	ctx context.Context,
+	targetServiceName string,
+) (string, error) {
+	if da.flags.All && targetServiceName != "" {
+		return "", fmt.Errorf("cannot specify both --all and <service>")
+	}
+	if !da.flags.All && targetServiceName == "" {
+		workingDirectory, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		if workingDirectory != da.azdCtx.ProjectDirectory() {
+			services, err := da.importManager.ServiceStable(ctx, da.projectConfig)
+			if err != nil {
+				return "", err
+			}
+			for _, service := range services {
+				if workingDirectory == service.Path() {
+					targetServiceName = service.Name
+					break
+				}
+			}
+			if targetServiceName == "" {
+				return "", fmt.Errorf(
+					"current working directory is not a project or service directory. " +
+						"Specify a service name to deploy a service, or specify --all to deploy all services",
+				)
+			}
+		}
+	}
+	if targetServiceName != "" {
+		hasService, err := da.importManager.HasService(ctx, da.projectConfig, targetServiceName)
+		if err != nil {
+			return "", err
+		}
+		if !hasService {
+			return "", fmt.Errorf("service name '%s' doesn't exist", targetServiceName)
+		}
+	}
+	return targetServiceName, nil
+}
+
+func (da *DeployAction) resolvePreviewTargets(
+	ctx context.Context,
+	services []*project.ServiceConfig,
+) ([]deployPreviewTarget, error) {
+	targets := make([]deployPreviewTarget, 0, len(services))
+	for _, service := range services {
+		target, err := da.getPreviewServiceTarget(ctx, service)
+		if err != nil {
+			return nil, fmt.Errorf("getting service target for %q: %w", service.Name, err)
+		}
+		previewer, ok := target.(project.ServiceTargetPreviewer)
+		if !ok || !previewer.SupportsPreview() {
+			return nil, fmt.Errorf(
+				"service %q uses target %q, which does not support deployment previews: %w",
+				service.Name,
+				service.Host,
+				azapi.ErrPreviewNotSupported,
+			)
+		}
+		targets = append(targets, deployPreviewTarget{
+			service:   service,
+			previewer: previewer,
+		})
+	}
+	return targets, nil
+}
+
+func (da *DeployAction) getPreviewServiceTarget(
+	ctx context.Context,
+	service *project.ServiceConfig,
+) (project.ServiceTarget, error) {
+	if da.serviceManager != nil {
+		return da.serviceManager.GetServiceTarget(ctx, service)
+	}
+
+	var target project.ServiceTarget
+	if err := da.serviceLocator.ResolveNamed(string(service.Host), &target); err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+func (da *DeployAction) previewServices(
+	ctx context.Context,
+	targets []deployPreviewTarget,
+) (*actions.ActionResult, error) {
+	if da.formatter.Kind() != output.JsonFormat {
+		da.console.MessageUxItem(ctx, &ux.MessageTitle{
+			Title:     "Previewing service changes (azd deploy --preview)",
+			TitleNote: "This is a preview. No deployment changes will be applied.",
+		})
+	}
+
+	result := DeploymentPreviewResult{
+		Timestamp: time.Now(),
+		Services:  make(map[string]*azdext.ServiceTargetPreview, len(targets)),
+	}
+	for _, target := range targets {
+		preview, err := target.previewer.Preview(ctx, target.service, da.env)
+		if err != nil {
+			return nil, fmt.Errorf("previewing service %q: %w", target.service.Name, err)
+		}
+		result.Services[target.service.Name] = preview
+	}
+
+	services := make([]*project.ServiceConfig, len(targets))
+	for i, target := range targets {
+		services[i] = target.service
+	}
+	if da.formatter.Kind() == output.JsonFormat {
+		if err := da.formatter.Format(result, da.writer, nil); err != nil {
+			return nil, fmt.Errorf("deployment preview could not be displayed: %w", err)
+		}
+	} else {
+		displayServiceDeploymentPreviews(ctx, da.console, services, result.Services)
+	}
+
+	return &actions.ActionResult{
+		Message: &actions.ResultMessage{
+			Header: "Deployment preview completed. No changes were made.",
+		},
+	}, nil
+}
+
+func displayServiceDeploymentPreviews(
+	ctx context.Context,
+	console input.Console,
+	services []*project.ServiceConfig,
+	previews map[string]*azdext.ServiceTargetPreview,
+) {
+	for _, service := range services {
+		preview := previews[service.Name]
+		if preview == nil {
+			continue
+		}
+
+		operation := ux.OperationTypeModify
+		switch {
+		case preview.Action == "create":
+			operation = ux.OperationTypeCreate
+		case preview.Action == "skip", preview.Action == "noChange":
+			operation = ux.OperationTypeNoChange
+		case len(preview.Changes) == 0:
+			operation = ux.OperationTypeDeploy
+		}
+
+		deltas := make([]ux.PropertyDelta, 0, len(preview.Changes)+4)
+		for _, change := range preview.Changes {
+			changeType := "Modify"
+			switch change.Change {
+			case "add":
+				changeType = "Create"
+			case "remove":
+				changeType = "Delete"
+			}
+			deltas = append(deltas, ux.PropertyDelta{
+				Path:       change.Group + "." + change.Field,
+				ChangeType: changeType,
+				Before:     change.Before,
+				After:      change.After,
+			})
+		}
+		if artifact := preview.Artifact; artifact != nil {
+			if preview.Action == "create" {
+				deltas = append(deltas, ux.PropertyDelta{
+					Path:       "artifact.type",
+					ChangeType: "Create",
+					After:      artifact.Type,
+				})
+			}
+			if preview.Action == "create" && artifact.Reference != "" {
+				deltas = append(deltas, ux.PropertyDelta{
+					Path:       "artifact.reference",
+					ChangeType: "Create",
+					After:      artifact.Reference,
+				})
+			}
+			for _, planned := range []struct {
+				path  string
+				value bool
+			}{
+				{path: "artifact.build", value: artifact.WouldBuild},
+				{path: "artifact.push", value: artifact.WouldPush},
+				{path: "artifact.upload", value: artifact.WouldUpload},
+			} {
+				if planned.value {
+					deltas = append(deltas, ux.PropertyDelta{
+						Path:       planned.path,
+						ChangeType: "Create",
+						After:      true,
+					})
+				}
+			}
+		}
+
+		console.MessageUxItem(ctx, &ux.PreviewProvision{
+			Operations: []*ux.Resource{{
+				Operation:      operation,
+				Type:           preview.Target.Type,
+				Name:           preview.Target.Name,
+				PropertyDeltas: deltas,
+			}},
+		})
+
+		switch {
+		case preview.RemoteComparison == "unavailableUntilProvision":
+			console.Message(
+				ctx,
+				"  Remote comparison is unavailable until the target project is provisioned.",
+			)
+		case len(preview.Changes) == 0 && preview.Action == "createVersion":
+			console.Message(
+				ctx,
+				"  No configuration changes. Deployment would still create a new immutable version.",
+			)
+		}
+	}
 }
 
 // dotNetPackagePublishBuildGateKey groups standard .NET services whose
@@ -544,6 +949,11 @@ func GetCmdDeployHelpDescription(*cobra.Command) string {
 				" or the service described in the project that matches the current directory."),
 		formatHelpNote(
 			fmt.Sprintf("When %s is set, only the specific service is deployed.", output.WithHighLightFormat("<service>"))),
+		formatHelpNote(
+			fmt.Sprintf(
+				"Use %s to inspect changes without packaging, publishing, or deploying.",
+				output.WithHighLightFormat("--preview"),
+			)),
 		formatHelpNote("After the deployment is complete, the endpoint is printed. To start the service, select" +
 			" the endpoint or paste it in a browser."),
 	})
@@ -562,6 +972,9 @@ func GetCmdDeployHelpFooter(*cobra.Command) string {
 		),
 		"Deploy the service named 'api' to Azure from a previously generated package.": output.WithHighLightFormat(
 			"azd deploy api --from-package <package-path>",
+		),
+		"Preview changes to the service named 'agent' without deploying.": output.WithHighLightFormat(
+			"azd deploy agent --preview",
 		),
 	})
 }

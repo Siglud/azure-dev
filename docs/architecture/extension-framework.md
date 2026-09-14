@@ -56,8 +56,29 @@ Extensions declare their capabilities in `extension.yaml`:
 | `mcp-server` | Provide Model Context Protocol tools for AI agents |
 | `framework-service-provider` | Add build/restore support for new languages |
 | `service-target-provider` | Add deployment support for new hosting targets |
+| `service-target-preview` | Preview service-target deployment changes without applying them; requires `service-target-provider` |
 | `provisioning-provider` | Add custom infrastructure provisioning support |
 | `metadata` | Provide metadata about commands and capabilities |
+
+### Service target deployment previews
+
+A service target that supports read-only deployment planning declares both
+`service-target-provider` and `service-target-preview`. Core azd checks the
+preview capability before sending a preview request, so an older provider can
+never receive `azd deploy --preview` as a normal mutating deploy.
+
+Preview-capable providers use the service-target preview helpers in
+`pkg/azdext` from their existing `Deploy` implementation. See the
+[extension framework guide](../../cli/azd/docs/extensions/extension-framework.md#service-target-providers)
+for the contract and example:
+
+1. Detect the request with `azdext.IsServiceTargetPreviewRequest`.
+2. Resolve and validate the desired state without packaging, publishing, or
+   applying changes.
+3. Return `azdext.NewServiceTargetPreviewResultArtifact` in the deploy result.
+
+All services selected by `azd deploy --preview` must support preview. This
+preflight check happens before any provider is invoked.
 
 ## Available gRPC Services
 

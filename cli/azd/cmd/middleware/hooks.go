@@ -32,7 +32,6 @@ type HooksMiddleware struct {
 // Creates a new instance of the Hooks middleware
 func NewHooksMiddleware(
 	envManager environment.Manager,
-	env *environment.Environment,
 	projectConfig *project.ProjectConfig,
 	importManager *project.ImportManager,
 	commandRunner exec.CommandRunner,
@@ -42,7 +41,6 @@ func NewHooksMiddleware(
 ) Middleware {
 	return &HooksMiddleware{
 		envManager:     envManager,
-		env:            env,
 		projectConfig:  projectConfig,
 		importManager:  importManager,
 		commandRunner:  commandRunner,
@@ -54,6 +52,20 @@ func NewHooksMiddleware(
 
 // Runs the Hooks middleware
 func (m *HooksMiddleware) Run(ctx context.Context, next NextFn) (*actions.ActionResult, error) {
+	if m.options.CommandPath == "azd deploy" &&
+		m.options.Flags != nil {
+		if preview, err := m.options.Flags.GetBool("preview"); err == nil && preview {
+			log.Println("deployment preview is read-only; skipping project and service hooks")
+			return next(ctx)
+		}
+	}
+
+	if m.env == nil {
+		if err := m.serviceLocator.Resolve(&m.env); err != nil {
+			return nil, fmt.Errorf("loading environment for hooks: %w", err)
+		}
+	}
+
 	// Validate hooks and display any warnings
 	if !IsChildAction(ctx) {
 		if err := m.validateHooks(ctx, m.projectConfig); err != nil {

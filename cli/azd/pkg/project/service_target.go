@@ -11,6 +11,7 @@ import (
 	"github.com/azure/azure-dev/cli/azd/internal/mapper"
 	"github.com/azure/azure-dev/cli/azd/pkg/async"
 	"github.com/azure/azure-dev/cli/azd/pkg/azapi"
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/azure/azure-dev/cli/azd/pkg/environment"
 	"github.com/azure/azure-dev/cli/azd/pkg/tools"
 )
@@ -120,6 +121,21 @@ type ServiceTarget interface {
 		serviceConfig *ServiceConfig,
 		targetResource *environment.TargetResource,
 	) ([]string, error)
+}
+
+// ServiceTargetPreviewer is implemented by service targets that can preview a deployment without mutating resources.
+type ServiceTargetPreviewer interface {
+	SupportsPreview() bool
+	InitializePreview(
+		ctx context.Context,
+		serviceConfig *ServiceConfig,
+		env *environment.Environment,
+	) error
+	Preview(
+		ctx context.Context,
+		serviceConfig *ServiceConfig,
+		env *environment.Environment,
+	) (*azdext.ServiceTargetPreview, error)
 }
 
 func resourceTypeMismatchError(

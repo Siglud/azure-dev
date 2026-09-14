@@ -214,7 +214,7 @@ func NewAgentServiceTargetProvider(azdClient *azdext.AzdClient) azdext.ServiceTa
 // to deploy-time entrypoints; an explicit $ref is resolved here for validation.
 func (p *AgentServiceTargetProvider) Initialize(ctx context.Context, serviceConfig *azdext.ServiceConfig) error {
 	if err := p.adoptAndResolveServiceConfig(ctx, serviceConfig); err != nil {
-		return err
+		return redactURLCredentialsInError(err, serviceConfig.GetImage())
 	}
 	props := ServiceConfigProps(serviceConfig)
 	needsLegacyLifecycleCheck := props == nil && strings.TrimSpace(serviceConfig.GetImage()) != "" &&
@@ -241,7 +241,10 @@ func (p *AgentServiceTargetProvider) Initialize(ctx context.Context, serviceConf
 			)
 		}
 	}
-	return validateRegistryConnectionServiceConfig(p.serviceConfig)
+	return redactURLCredentialsInError(
+		validateRegistryConnectionServiceConfig(p.serviceConfig),
+		p.serviceConfig.GetImage(),
+	)
 }
 
 func validateRegistryConnectionServiceConfig(serviceConfig *azdext.ServiceConfig) error {
@@ -1617,6 +1620,9 @@ func (p *AgentServiceTargetProvider) Deploy(
 ) (*azdext.ServiceDeployResult, error) {
 	if err := p.adoptAndResolveServiceConfig(ctx, serviceConfig); err != nil {
 		return nil, err
+	}
+	if isServiceTargetPreviewRequest(targetResource) {
+		return p.previewDeploy(ctx, p.serviceConfig, targetResource)
 	}
 	// Prompt agents are created on the managed harness, not the Foundry
 	// service. Dispatch to the dedicated harness deploy path before any

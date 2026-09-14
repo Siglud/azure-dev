@@ -155,3 +155,7 @@ words:
   - subfolders
   - ufeff
   - warnf
+overrides:
+  - filename: internal/project/deploy_preview.go
+    words:
+      - AIPROJECT
