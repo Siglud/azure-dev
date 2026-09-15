@@ -47,18 +47,19 @@ func TestAgentRootRejectsOldAddCommandOrder(t *testing.T) {
 	}
 }
 
-func TestAgentRootDoesNotExposeStandaloneDeploy(t *testing.T) {
+func TestAgentRootExposesDryRunOnlyDeploy(t *testing.T) {
 	// Root construction changes Cobra's global traversal setting.
 	root := NewRootCommand()
-	for _, command := range root.Commands() {
-		assert.NotEqual(t, "deploy", command.Name())
-		assert.NotContains(t, command.Aliases, "deploy")
-	}
 	var output bytes.Buffer
 	root.SetOut(&output)
 	root.SetErr(&output)
 	root.SetArgs([]string{"deploy", "./agent.yaml"})
-	require.ErrorContains(t, root.ExecuteContext(t.Context()), `unknown command "deploy"`)
+	require.ErrorContains(t, root.ExecuteContext(t.Context()), "only supports deployment previews")
+
+	command, remaining, err := root.Find([]string{"deploy"})
+	require.NoError(t, err)
+	require.Empty(t, remaining)
+	require.NotNil(t, command.Flags().Lookup("dry-run"))
 }
 
 func TestAgentCoreDeployServiceTargetRemainsRegistered(t *testing.T) {

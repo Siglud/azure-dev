@@ -68,6 +68,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(newInitCommand(extCtx))
 	rootCmd.AddCommand(newAgentDependencyCommand(extCtx, "toolbox", AiToolboxHost))
 	rootCmd.AddCommand(newAgentDependencyCommand(extCtx, "connection", AiConnectionHost))
+	rootCmd.AddCommand(newAgentDeployCommand(extCtx))
 	rootCmd.AddCommand(newRunCommand(extCtx))
 	rootCmd.AddCommand(newInvokeCommand(extCtx))
 	rootCmd.AddCommand(newMcpCommand())
