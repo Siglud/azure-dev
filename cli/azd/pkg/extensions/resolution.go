@@ -381,7 +381,7 @@ func extensionVersionMatchesResolution(
 // ProviderTypeForCapability returns the provider type a capability is expected to register.
 func ProviderTypeForCapability(capability CapabilityType) (ProviderType, bool) {
 	switch capability {
-	case ServiceTargetProviderCapability:
+	case ServiceTargetProviderCapability, ServiceTargetPreviewCapability:
 		return ServiceTargetProviderType, true
 	case ProvisioningProviderCapability:
 		return ProvisioningProviderType, true

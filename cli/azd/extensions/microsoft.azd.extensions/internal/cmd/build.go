@@ -366,6 +366,7 @@ func validateExtensionMetadata(schema *models.ExtensionSchema) (warnings, errs [
 	// Capability-specific recommendations.
 	hasCustomCommands := slices.Contains(schema.Capabilities, extensions.CustomCommandCapability)
 	hasServiceTarget := slices.Contains(schema.Capabilities, extensions.ServiceTargetProviderCapability)
+	hasServiceTargetPreview := slices.Contains(schema.Capabilities, extensions.ServiceTargetPreviewCapability)
 
 	// Missing namespace is fatal for custom-commands extensions: bindExtension
 	// uses the last '.'-segment of Namespace as the cobra command name, so an
@@ -386,6 +387,11 @@ func validateExtensionMetadata(schema *models.ExtensionSchema) (warnings, errs [
 			"Missing 'providers' field in extension.yaml - "+
 				"required by the 'service-target-provider' capability. "+
 				"List the providers your extension contributes (each entry needs a name, type, and description).",
+		)
+	}
+	if hasServiceTargetPreview && !hasServiceTarget {
+		errs = append(errs,
+			"Capability 'service-target-preview' requires 'service-target-provider' in extension.yaml.",
 		)
 	}
 

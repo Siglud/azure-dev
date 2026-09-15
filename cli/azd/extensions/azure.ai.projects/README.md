@@ -61,6 +61,12 @@ services:
 
 When `endpoint` is omitted, `azd provision` creates a Foundry account and project. When it is set, provisioning reuses that project and reconciles the declarations that can be applied to an existing account.
 
+`azd deploy --preview` reports an `azure.ai.project` service as skipped because
+its resource changes belong to `azd provision --preview`. This lets a whole
+Foundry project preview continue to a hosted-agent service without treating the
+project service's intentional deploy no-op as unsupported. Other selected
+service targets must independently support deployment preview.
+
 For projects that use `infra.layers`, declare exactly one layer with
 `provider: microsoft.foundry` and leave the root provider available for the
 other layers:

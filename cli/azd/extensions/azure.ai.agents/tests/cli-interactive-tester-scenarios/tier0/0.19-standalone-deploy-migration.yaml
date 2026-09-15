@@ -56,9 +56,10 @@ goals:
     incidental mentions of deployment in descriptions or examples.
   - >-
     Run exactly 'azd deploy --help'. Confirm exit code 0, usage contains 'deploy <service>', and the
-    --all flag is documented for deploying all services. This checks the replacement core project
-    lifecycle interface only. Do not execute any deployment examples printed by help and do not
-    infer that a targeted Agent deployment deploys its dependencies.
+    --all flag is documented for deploying all services. Confirm --preview is documented as a
+    read-only deployment preview. This checks the replacement core project lifecycle interface
+    only. Do not execute any deployment examples printed by help and do not infer that a targeted
+    Agent deployment deploys its dependencies.
   - >-
     After both help commands, confirm azure.yaml and the entire working tree remain identical to the
     fixture, including absence of .azure. Take best-effort screenshots of the rejection errors and

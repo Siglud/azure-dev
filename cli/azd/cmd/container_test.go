@@ -5,21 +5,234 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/azure/azure-dev/cli/azd/cmd/actions"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/azure/azure-dev/cli/azd/cmd/middleware"
 	"github.com/azure/azure-dev/cli/azd/internal"
+	internalcmd "github.com/azure/azure-dev/cli/azd/internal/cmd"
+	"github.com/azure/azure-dev/cli/azd/pkg/async"
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/azure/azure-dev/cli/azd/pkg/environment"
 	"github.com/azure/azure-dev/cli/azd/pkg/environment/azdcontext"
 	"github.com/azure/azure-dev/cli/azd/pkg/ioc"
 	"github.com/azure/azure-dev/cli/azd/pkg/lazy"
+	"github.com/azure/azure-dev/cli/azd/pkg/output"
 	"github.com/azure/azure-dev/cli/azd/pkg/project"
+	"github.com/azure/azure-dev/cli/azd/pkg/tools"
 )
+
+func TestDeployPreviewActionResolutionDoesNotCreateEnvironment(t *testing.T) {
+	projectDirectory := t.TempDir()
+	t.Chdir(projectDirectory)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectDirectory, "azure.yaml"),
+		[]byte("name: preview-test\nservices: {}\n"),
+		0o600,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectDirectory, ".env"),
+		[]byte("DO_NOT_READ=secret\n"),
+		0o600,
+	))
+
+	container := ioc.NewNestedContainer(nil)
+	ioc.RegisterInstance(container, t.Context())
+	global := &internal.GlobalCommandOptions{Cwd: projectDirectory, NoPrompt: true}
+	ioc.RegisterInstance(container, global)
+	registerCommonDependencies(container)
+
+	azdContext := azdcontext.NewAzdContextWithDirectory(projectDirectory)
+	ioc.RegisterInstance(container, azdContext)
+	projectConfig := &project.ProjectConfig{
+		Name:     "preview-test",
+		Path:     projectDirectory,
+		Services: map[string]*project.ServiceConfig{},
+	}
+	ioc.RegisterInstance(container, projectConfig)
+	flags := internalcmd.NewDeployFlagsFromEnvAndOptions(
+		&internal.EnvFlag{EnvironmentName: ".."},
+		global,
+	)
+	flags.All = true
+	flags.Preview = true
+	ioc.RegisterInstance(container, flags)
+	ioc.RegisterInstance(container, []string{})
+	ioc.RegisterInstance(container, internalcmd.NewDeployCmd())
+	ioc.RegisterInstance[output.Formatter](container, &output.NoneFormatter{})
+	ioc.RegisterInstance[io.Writer](container, io.Discard)
+	container.MustRegisterNamedTransient("deployAction", internalcmd.NewDeployAction)
+
+	var action actions.Action
+	require.NoError(t, container.ResolveNamed("deployAction", &action))
+	require.NoDirExists(t, filepath.Join(projectDirectory, ".azure"))
+
+	_, err := action.Run(t.Context())
+	require.ErrorContains(t, err, `invalid environment name ".."`)
+	require.NoDirExists(t, filepath.Join(projectDirectory, ".azure"))
+	contents, readErr := os.ReadFile(filepath.Join(projectDirectory, ".env"))
+	require.NoError(t, readErr)
+	require.Equal(t, "DO_NOT_READ=secret\n", string(contents))
+}
+
+func TestDeployPreviewReadsExistingEnvironmentWithoutWrites(t *testing.T) {
+	projectDirectory := t.TempDir()
+	t.Chdir(projectDirectory)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(projectDirectory, "azure.yaml"),
+		[]byte("name: preview-test\nservices: {}\n"),
+		0o600,
+	))
+	environmentDirectory := filepath.Join(projectDirectory, ".azure", "test")
+	require.NoError(t, os.MkdirAll(environmentDirectory, 0o700))
+	envPath := filepath.Join(environmentDirectory, ".env")
+	envContents := []byte("FOUNDRY_PROJECT_ENDPOINT=https://example.test\n")
+	require.NoError(t, os.WriteFile(envPath, envContents, 0o600))
+
+	container := ioc.NewNestedContainer(nil)
+	ioc.RegisterInstance(container, t.Context())
+	global := &internal.GlobalCommandOptions{Cwd: projectDirectory, NoPrompt: true}
+	ioc.RegisterInstance(container, global)
+	registerCommonDependencies(container)
+
+	azdContext := azdcontext.NewAzdContextWithDirectory(projectDirectory)
+	ioc.RegisterInstance(container, azdContext)
+	projectConfig := &project.ProjectConfig{
+		Name: "preview-test",
+		Path: projectDirectory,
+	}
+	serviceConfig := &project.ServiceConfig{
+		Project:      projectConfig,
+		Name:         "agent",
+		Host:         project.ServiceTargetKind("preview.test"),
+		RelativePath: ".",
+	}
+	projectConfig.Services = map[string]*project.ServiceConfig{"agent": serviceConfig}
+	ioc.RegisterInstance(container, projectConfig)
+	target := &readOnlyPreviewTarget{}
+	ioc.RegisterNamedInstance[project.ServiceTarget](container, "preview.test", target)
+	flags := internalcmd.NewDeployFlagsFromEnvAndOptions(
+		&internal.EnvFlag{EnvironmentName: "test"},
+		global,
+	)
+	flags.All = true
+	flags.Preview = true
+	ioc.RegisterInstance(container, flags)
+	ioc.RegisterInstance(container, []string{})
+	ioc.RegisterInstance(container, internalcmd.NewDeployCmd())
+	ioc.RegisterInstance[output.Formatter](container, &output.NoneFormatter{})
+	ioc.RegisterInstance[io.Writer](container, io.Discard)
+	container.MustRegisterNamedTransient("deployAction", internalcmd.NewDeployAction)
+
+	var action actions.Action
+	require.NoError(t, container.ResolveNamed("deployAction", &action))
+	result, err := action.Run(t.Context())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "https://example.test", target.endpoint)
+	require.Equal(t, 1, target.previewInitializeCalls)
+	require.Equal(t, 1, target.previewCalls)
+	require.Zero(t, target.initializeCalls)
+
+	require.NoFileExists(t, filepath.Join(environmentDirectory, ".env.lock"))
+	require.NoFileExists(t, filepath.Join(environmentDirectory, environment.ConfigFileName))
+	require.NoFileExists(t, filepath.Join(projectDirectory, ".azure", azdcontext.ConfigFileName))
+	actualEnvContents, readErr := os.ReadFile(envPath)
+	require.NoError(t, readErr)
+	require.Equal(t, envContents, actualEnvContents)
+}
+
+type readOnlyPreviewTarget struct {
+	endpoint               string
+	initializeCalls        int
+	previewInitializeCalls int
+	previewCalls           int
+}
+
+func (t *readOnlyPreviewTarget) Initialize(context.Context, *project.ServiceConfig) error {
+	t.initializeCalls++
+	return nil
+}
+
+func (t *readOnlyPreviewTarget) InitializePreview(
+	_ context.Context,
+	_ *project.ServiceConfig,
+	env *environment.Environment,
+) error {
+	t.previewInitializeCalls++
+	t.endpoint = env.Getenv("FOUNDRY_PROJECT_ENDPOINT")
+	return nil
+}
+
+func (*readOnlyPreviewTarget) RequiredExternalTools(
+	context.Context,
+	*project.ServiceConfig,
+) []tools.ExternalTool {
+	return nil
+}
+
+func (*readOnlyPreviewTarget) Package(
+	context.Context,
+	*project.ServiceConfig,
+	*project.ServiceContext,
+	*async.Progress[project.ServiceProgress],
+) (*project.ServicePackageResult, error) {
+	return &project.ServicePackageResult{}, nil
+}
+
+func (*readOnlyPreviewTarget) Publish(
+	context.Context,
+	*project.ServiceConfig,
+	*project.ServiceContext,
+	*environment.TargetResource,
+	*async.Progress[project.ServiceProgress],
+	*project.PublishOptions,
+) (*project.ServicePublishResult, error) {
+	return &project.ServicePublishResult{}, nil
+}
+
+func (*readOnlyPreviewTarget) Deploy(
+	context.Context,
+	*project.ServiceConfig,
+	*project.ServiceContext,
+	*environment.TargetResource,
+	*async.Progress[project.ServiceProgress],
+) (*project.ServiceDeployResult, error) {
+	return &project.ServiceDeployResult{}, nil
+}
+
+func (*readOnlyPreviewTarget) Endpoints(
+	context.Context,
+	*project.ServiceConfig,
+	*environment.TargetResource,
+) ([]string, error) {
+	return nil, nil
+}
+
+func (*readOnlyPreviewTarget) SupportsPreview() bool {
+	return true
+}
+
+func (t *readOnlyPreviewTarget) Preview(
+	_ context.Context,
+	_ *project.ServiceConfig,
+	env *environment.Environment,
+) (*azdext.ServiceTargetPreview, error) {
+	t.previewCalls++
+	t.endpoint = env.Getenv("FOUNDRY_PROJECT_ENDPOINT")
+	return &azdext.ServiceTargetPreview{
+		Target:  azdext.ServiceTargetPreviewTarget{Type: "test", Name: "agent"},
+		Action:  "noChange",
+		Changes: []azdext.ServiceTargetPreviewChange{},
+	}, nil
+}
 
 func Test_Lazy_Project_Config_Resolution(t *testing.T) {
 	t.Parallel()

@@ -132,6 +132,22 @@ func TestValidateExtensionMetadata(t *testing.T) {
 			},
 		},
 		{
+			name: "service target preview without provider is a fatal error",
+			schema: &models.ExtensionSchema{
+				Id:           "test.extension",
+				Version:      "0.0.1",
+				DisplayName:  "Test Extension",
+				Description:  "A test extension",
+				Usage:        "azd test <command>",
+				Capabilities: []extensions.CapabilityType{extensions.ServiceTargetPreviewCapability},
+			},
+			wantErrorCount: 1,
+			wantErrorContains: []string{
+				"service-target-preview",
+				"service-target-provider",
+			},
+		},
+		{
 			name: "extension pack without capabilities or usage is valid",
 			schema: &models.ExtensionSchema{
 				Id:          "test.pack",

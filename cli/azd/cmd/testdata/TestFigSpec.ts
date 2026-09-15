@@ -6474,6 +6474,10 @@ const completionSpec: Fig.Spec = {
 					],
 				},
 				{
+					name: ['--preview'],
+					description: 'Preview deployment changes without applying them (currently supported for Microsoft Foundry hosted agents).',
+				},
+				{
 					name: ['--timeout'],
 					description: 'Maximum time in seconds for azd to wait for each service deployment. This stops azd from waiting but does not cancel the Azure-side deployment. (default: 1200)',
 					args: [

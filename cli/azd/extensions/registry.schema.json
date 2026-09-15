@@ -79,6 +79,7 @@
                             "lifecycle-events",
                             "mcp-server",
                             "service-target-provider",
+                            "service-target-preview",
                             "framework-service-provider",
                             "provisioning-provider",
                             "validation-provider",

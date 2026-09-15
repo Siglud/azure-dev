@@ -28,6 +28,7 @@ var ValidCapabilities = []CapabilityType{
 	LifecycleEventsCapability,
 	McpServerCapability,
 	ServiceTargetProviderCapability,
+	ServiceTargetPreviewCapability,
 	FrameworkServiceProviderCapability,
 	MetadataCapability,
 	ProvisioningProviderCapability,
@@ -285,6 +286,15 @@ func validateVersion(
 			result.addError(fmt.Sprintf("%s: unknown capability '%s' (valid: %s)",
 				prefix, cap, strings.Join(capabilityStrings(), ", ")))
 		}
+	}
+	if slices.Contains(ver.Capabilities, ServiceTargetPreviewCapability) &&
+		!slices.Contains(ver.Capabilities, ServiceTargetProviderCapability) {
+		result.addError(fmt.Sprintf(
+			"%s: capability '%s' requires '%s'",
+			prefix,
+			ServiceTargetPreviewCapability,
+			ServiceTargetProviderCapability,
+		))
 	}
 
 	// Enforce that each version has at least one artifact or dependency

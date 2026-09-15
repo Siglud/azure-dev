@@ -40,5 +40,12 @@ goals:
   - "If asked to select a model, choose '{model}' and accept the defaults for model version, SKU, and capacity."
   - "Wait for initialization to complete — look for 'Next:' in the output."
   - "Verify the scaffold: confirm azure.yaml was created in the current working directory to reference the local code as an azure.ai.agent service, and that a .agentignore file was generated."
+  - >-
+    Before provisioning, run exactly 'azd deploy --all --preview --output json --no-prompt'.
+    Confirm exit code 0 and valid JSON: the azure.ai.project service reports action 'skip', while
+    the hosted-agent service reports action 'create', remoteComparison
+    'unavailableUntilProvision', source 'azure.yaml', and a codePackage artifact with
+    wouldUpload=true. Confirm no package archive, image, deployment output, or AGENT_* deployment
+    value is created, and that the project files and azd environment are otherwise unchanged.
   - "Take a screenshot of the completed init output."
   - "STOP here — do NOT run 'azd provision'. Report a finding if code-detection misbehaves or if the manifest-reuse prompt is confusing."

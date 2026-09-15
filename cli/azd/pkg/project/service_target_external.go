@@ -139,7 +139,37 @@ func (est *ExternalServiceTarget) Initialize(ctx context.Context, serviceConfig 
 	if err != nil {
 		return err
 	}
+	return est.sendInitializeRequest(ctx, protoServiceConfig)
+}
 
+// InitializePreview initializes a preview-capable service target using the read-only environment
+// snapshot supplied by the deploy command.
+func (est *ExternalServiceTarget) InitializePreview(
+	ctx context.Context,
+	serviceConfig *ServiceConfig,
+	env *environment.Environment,
+) error {
+	if !est.SupportsPreview() {
+		return fmt.Errorf("service target %q does not support deployment previews", est.targetName)
+	}
+	if serviceConfig == nil {
+		return errors.New("service configuration is required")
+	}
+	if env == nil {
+		return errors.New("existing environment is required for deployment preview")
+	}
+
+	protoServiceConfig, err := serviceConfigToProtoWithEnvironment(env, serviceConfig)
+	if err != nil {
+		return err
+	}
+	return est.sendInitializeRequest(ctx, protoServiceConfig)
+}
+
+func (est *ExternalServiceTarget) sendInitializeRequest(
+	ctx context.Context,
+	protoServiceConfig *azdext.ServiceConfig,
+) error {
 	req := &azdext.ServiceTargetMessage{
 		RequestId: uuid.NewString(),
 		MessageType: &azdext.ServiceTargetMessage_InitializeRequest{
@@ -149,7 +179,7 @@ func (est *ExternalServiceTarget) Initialize(ctx context.Context, serviceConfig 
 		},
 	}
 
-	_, err = est.broker.SendAndWait(ctx, req)
+	_, err := est.broker.SendAndWait(ctx, req)
 	return err
 }
 
@@ -207,6 +237,42 @@ func (est *ExternalServiceTarget) Package(
 	return convertedResult, nil
 }
 
+// SupportsPreview reports whether the extension opted into read-only deployment previews.
+func (est *ExternalServiceTarget) SupportsPreview() bool {
+	return est.extension != nil &&
+		est.extension.HasCapability(extensions.ServiceTargetPreviewCapability)
+}
+
+// Preview returns the deployment changes reported by a preview-capable extension.
+func (est *ExternalServiceTarget) Preview(
+	ctx context.Context,
+	serviceConfig *ServiceConfig,
+	env *environment.Environment,
+) (*azdext.ServiceTargetPreview, error) {
+	if !est.SupportsPreview() {
+		return nil, fmt.Errorf("service target %q does not support deployment previews", est.targetName)
+	}
+
+	response, err := est.sendDeployRequest(
+		ctx,
+		serviceConfig,
+		NewServiceContext(),
+		nil,
+		nil,
+		true,
+		env,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	preview, err := azdext.ParseServiceTargetPreviewResult(response.Artifacts)
+	if err != nil {
+		return nil, fmt.Errorf("service target %q returned an invalid deployment preview: %w", est.targetName, err)
+	}
+	return preview, nil
+}
+
 // Deploy deploys the given deployment artifact to the target resource
 func (est *ExternalServiceTarget) Deploy(
 	ctx context.Context,
@@ -215,8 +281,47 @@ func (est *ExternalServiceTarget) Deploy(
 	targetResource *environment.TargetResource,
 	progress *async.Progress[ServiceProgress],
 ) (*ServiceDeployResult, error) {
-	// Convert project types to protobuf types
-	protoServiceConfig, err := est.toProtoServiceConfig(serviceConfig)
+	deployResult, err := est.sendDeployRequest(
+		ctx,
+		serviceConfig,
+		serviceContext,
+		targetResource,
+		progress,
+		false,
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert protobuf result back to project types using mapper
+	var result *ServiceDeployResult
+	if err := mapper.Convert(deployResult, &result); err != nil {
+		return nil, fmt.Errorf("failed to convert deploy result: %w", err)
+	}
+
+	return result, nil
+}
+
+func (est *ExternalServiceTarget) sendDeployRequest(
+	ctx context.Context,
+	serviceConfig *ServiceConfig,
+	serviceContext *ServiceContext,
+	targetResource *environment.TargetResource,
+	progress *async.Progress[ServiceProgress],
+	preview bool,
+	previewEnvironment *environment.Environment,
+) (*azdext.ServiceDeployResult, error) {
+	var protoServiceConfig *azdext.ServiceConfig
+	var err error
+	if preview {
+		if previewEnvironment == nil {
+			return nil, errors.New("existing environment is required for deployment preview")
+		}
+		protoServiceConfig, err = serviceConfigToProtoWithEnvironment(previewEnvironment, serviceConfig)
+	} else {
+		protoServiceConfig, err = est.toProtoServiceConfig(serviceConfig)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -226,8 +331,22 @@ func (est *ExternalServiceTarget) Deploy(
 		return nil, err
 	}
 	var protoTargetResource *azdext.TargetResource
-	if err = mapper.Convert(targetResource, &protoTargetResource); err != nil {
-		return nil, err
+	if targetResource != nil {
+		if err = mapper.Convert(targetResource, &protoTargetResource); err != nil {
+			return nil, err
+		}
+	}
+	if preview {
+		if protoTargetResource == nil {
+			protoTargetResource = &azdext.TargetResource{}
+		}
+		azdext.MarkServiceTargetPreviewRequest(protoTargetResource)
+		if err := azdext.SetServiceTargetPreviewEnvironment(
+			protoTargetResource,
+			previewEnvironment.Dotenv(),
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	// Create Deploy request message
@@ -254,13 +373,7 @@ func (est *ExternalServiceTarget) Deploy(
 		return nil, errors.New("invalid deploy response: missing deploy result")
 	}
 
-	// Convert protobuf result back to project types using mapper
-	var result *ServiceDeployResult
-	if err := mapper.Convert(deployResponse.Result, &result); err != nil {
-		return nil, fmt.Errorf("failed to convert deploy result: %w", err)
-	}
-
-	return result, nil
+	return deployResponse.Result, nil
 }
 
 // Endpoints gets the endpoints a service exposes.
@@ -395,6 +508,17 @@ func serviceConfigToProto(
 				err,
 			)
 		}
+	}
+
+	return serviceConfigToProtoWithEnvironment(env, serviceConfig)
+}
+
+func serviceConfigToProtoWithEnvironment(
+	env *environment.Environment,
+	serviceConfig *ServiceConfig,
+) (*azdext.ServiceConfig, error) {
+	if serviceConfig == nil {
+		return nil, nil
 	}
 
 	var protoConfig *azdext.ServiceConfig

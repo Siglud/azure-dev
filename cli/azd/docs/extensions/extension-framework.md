@@ -232,6 +232,34 @@ type ServiceTargetProvider interface {
 }
 ```
 
+To support `azd deploy --preview`, also declare `service-target-preview` next
+to `service-target-provider`. Preview uses the existing `Deploy` callback with
+a read-only marker so extensions built against older SDK releases remain
+binary-compatible:
+
+```go
+if azdext.IsServiceTargetPreviewRequest(targetResource) {
+    preview := &azdext.ServiceTargetPreview{
+        Target: azdext.ServiceTargetPreviewTarget{
+            Type: "custom resource",
+            Name: serviceConfig.Name,
+        },
+        Action: "update",
+        Changes: []azdext.ServiceTargetPreviewChange{},
+    }
+    artifact, err := azdext.NewServiceTargetPreviewResultArtifact(preview)
+    if err != nil {
+        return nil, err
+    }
+    return &azdext.ServiceDeployResult{Artifacts: []*azdext.Artifact{artifact}}, nil
+}
+```
+
+The preview branch must run before package, publish, deploy, state-write, or
+other mutating work. azd checks the declared capability before invoking any
+selected service and rejects mixed `--all` selections unless every target
+supports preview.
+
 #### Metadata
 
 Extensions with the `metadata` capability provide comprehensive metadata about their commands and configuration schemas. This enables:

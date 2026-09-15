@@ -112,7 +112,7 @@
     "capabilities": {
       "type": "array",
       "title": "Capabilities",
-      "description": "List of capabilities provided by the extension. Supported values: custom-commands, lifecycle-events, mcp-server, service-target-provider, framework-service-provider, provisioning-provider, validation-provider, metadata. Select one or more from the allowed list. Each value must be unique. Not required for extension packs, which declare dependencies instead and have no executable.",
+      "description": "List of capabilities provided by the extension. Supported values: custom-commands, lifecycle-events, mcp-server, service-target-provider, service-target-preview, framework-service-provider, provisioning-provider, validation-provider, metadata. Select one or more from the allowed list. Each value must be unique. Not required for extension packs, which declare dependencies instead and have no executable.",
       "minItems": 1,
       "uniqueItems": true,
       "items": {
@@ -140,6 +140,12 @@
             "const": "service-target-provider",
             "title": "Service Target Provider",
             "description": "Service target provider enables extensions to provide custom service deployment targets."
+          },
+          {
+            "type": "string",
+            "const": "service-target-preview",
+            "title": "Service Target Preview",
+            "description": "Service target preview enables a service target provider to preview deployment changes without mutating resources."
           },
           {
             "type": "string",

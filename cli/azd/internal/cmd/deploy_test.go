@@ -4,9 +4,11 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,8 +17,10 @@ import (
 	"github.com/azure/azure-dev/cli/azd/internal"
 	"github.com/azure/azure-dev/cli/azd/pkg/alpha"
 	"github.com/azure/azure-dev/cli/azd/pkg/async"
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/azure/azure-dev/cli/azd/pkg/config"
 	"github.com/azure/azure-dev/cli/azd/pkg/environment"
+	"github.com/azure/azure-dev/cli/azd/pkg/environment/azdcontext"
 	"github.com/azure/azure-dev/cli/azd/pkg/output"
 	"github.com/azure/azure-dev/cli/azd/pkg/project"
 	"github.com/azure/azure-dev/cli/azd/pkg/tools"
@@ -61,6 +65,87 @@ func TestDeployFlagsTimeoutFlag(t *testing.T) {
 			require.Equal(t, tt.want, flags.Timeout)
 		})
 	}
+}
+
+func TestDeployFlagsPreviewFlag(t *testing.T) {
+	t.Parallel()
+
+	cmd := NewDeployCmd()
+	flags := NewDeployFlags(cmd, &internal.GlobalCommandOptions{})
+
+	require.NoError(t, cmd.ParseFlags([]string{"--preview", "--all"}))
+	require.True(t, flags.Preview)
+}
+
+func TestDeployPreviewRejectsIgnoredFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "FromPackage",
+			args:    []string{"--preview", "--all", "--from-package", "agent.zip"},
+			wantErr: "--from-package cannot be used with --preview: invalid flag combination",
+		},
+		{
+			name:    "Timeout",
+			args:    []string{"--preview", "--all", "--timeout", "30"},
+			wantErr: "--timeout cannot be used with --preview: invalid flag combination",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := NewDeployCmd()
+			flags := NewDeployFlags(cmd, &internal.GlobalCommandOptions{})
+			require.NoError(t, cmd.ParseFlags(test.args))
+
+			_, err := (&DeployAction{flags: flags}).Run(t.Context())
+			require.EqualError(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestDeployPreviewRequiresExistingEnvironmentWithoutCreatingOne(t *testing.T) {
+	t.Parallel()
+
+	cmd := NewDeployCmd()
+	flags := NewDeployFlags(cmd, &internal.GlobalCommandOptions{})
+	require.NoError(t, cmd.ParseFlags([]string{"--all", "--preview", "--environment", "missing"}))
+	projectDirectory := t.TempDir()
+	action := &DeployAction{
+		flags:  flags,
+		azdCtx: azdcontext.NewAzdContextWithDirectory(projectDirectory),
+	}
+
+	_, err := action.Run(t.Context())
+
+	require.ErrorContains(t, err, "deployment preview requires an existing environment")
+	require.ErrorContains(t, err, "environment not found")
+	require.NoDirExists(t, filepath.Join(projectDirectory, ".azure"))
+}
+
+func TestDeployPreviewRejectsUnsafeEnvironmentNameBeforeLookup(t *testing.T) {
+	t.Parallel()
+
+	cmd := NewDeployCmd()
+	flags := NewDeployFlags(cmd, &internal.GlobalCommandOptions{})
+	require.NoError(t, cmd.ParseFlags([]string{"--all", "--preview", "--environment", ".."}))
+	projectDirectory := t.TempDir()
+	action := &DeployAction{
+		flags:  flags,
+		azdCtx: azdcontext.NewAzdContextWithDirectory(projectDirectory),
+	}
+
+	_, err := action.Run(t.Context())
+
+	require.ErrorContains(t, err, `invalid environment name ".."`)
+	require.NoDirExists(t, filepath.Join(projectDirectory, ".azure"))
 }
 
 func TestDeployActionResolveDeployTimeout(t *testing.T) {
@@ -309,6 +394,11 @@ type mockDeployServiceManager struct {
 	deployHasDeadline bool
 	deployErr         error
 	waitForTimeout    bool
+	previewTarget     project.ServiceTarget
+	previewTargets    map[project.ServiceTargetKind]project.ServiceTarget
+	packageCalls      int
+	publishCalls      int
+	deployCalls       int
 }
 
 func (m *mockDeployServiceManager) GetRequiredTools(
@@ -353,6 +443,7 @@ func (m *mockDeployServiceManager) Package(
 	progress *async.Progress[project.ServiceProgress],
 	options *project.PackageOptions,
 ) (*project.ServicePackageResult, error) {
+	m.packageCalls++
 	return &project.ServicePackageResult{}, nil
 }
 
@@ -363,6 +454,7 @@ func (m *mockDeployServiceManager) Publish(
 	progress *async.Progress[project.ServiceProgress],
 	publishOptions *project.PublishOptions,
 ) (*project.ServicePublishResult, error) {
+	m.publishCalls++
 	return &project.ServicePublishResult{}, nil
 }
 
@@ -372,6 +464,7 @@ func (m *mockDeployServiceManager) Deploy(
 	serviceContext *project.ServiceContext,
 	progress *async.Progress[project.ServiceProgress],
 ) (*project.ServiceDeployResult, error) {
+	m.deployCalls++
 	m.deployDeadline, m.deployHasDeadline = ctx.Deadline()
 	m.Called(serviceConfig.Name)
 
@@ -406,7 +499,307 @@ func (m *mockDeployServiceManager) GetServiceTarget(
 	ctx context.Context,
 	serviceConfig *project.ServiceConfig,
 ) (project.ServiceTarget, error) {
+	if target := m.previewTargets[serviceConfig.Host]; target != nil {
+		return target, nil
+	}
+	return m.previewTarget, nil
+}
+
+type mockPreviewServiceTarget struct {
+	preview                *azdext.ServiceTargetPreview
+	supports               bool
+	initializeCalls        int
+	previewInitializeCalls int
+	calls                  int
+}
+
+func (m *mockPreviewServiceTarget) Initialize(context.Context, *project.ServiceConfig) error {
+	m.initializeCalls++
+	return nil
+}
+
+func (m *mockPreviewServiceTarget) InitializePreview(
+	context.Context,
+	*project.ServiceConfig,
+	*environment.Environment,
+) error {
+	m.previewInitializeCalls++
+	return nil
+}
+
+func (*mockPreviewServiceTarget) RequiredExternalTools(
+	context.Context,
+	*project.ServiceConfig,
+) []tools.ExternalTool {
+	return nil
+}
+
+func (*mockPreviewServiceTarget) Package(
+	context.Context,
+	*project.ServiceConfig,
+	*project.ServiceContext,
+	*async.Progress[project.ServiceProgress],
+) (*project.ServicePackageResult, error) {
+	return &project.ServicePackageResult{}, nil
+}
+
+func (*mockPreviewServiceTarget) Publish(
+	context.Context,
+	*project.ServiceConfig,
+	*project.ServiceContext,
+	*environment.TargetResource,
+	*async.Progress[project.ServiceProgress],
+	*project.PublishOptions,
+) (*project.ServicePublishResult, error) {
+	return &project.ServicePublishResult{}, nil
+}
+
+func (*mockPreviewServiceTarget) Deploy(
+	context.Context,
+	*project.ServiceConfig,
+	*project.ServiceContext,
+	*environment.TargetResource,
+	*async.Progress[project.ServiceProgress],
+) (*project.ServiceDeployResult, error) {
+	return &project.ServiceDeployResult{}, nil
+}
+
+func (*mockPreviewServiceTarget) Endpoints(
+	context.Context,
+	*project.ServiceConfig,
+	*environment.TargetResource,
+) ([]string, error) {
 	return nil, nil
+}
+
+func (m *mockPreviewServiceTarget) SupportsPreview() bool {
+	return m.supports
+}
+
+func (m *mockPreviewServiceTarget) Preview(
+	context.Context,
+	*project.ServiceConfig,
+	*environment.Environment,
+) (*azdext.ServiceTargetPreview, error) {
+	m.calls++
+	return m.preview, nil
+}
+
+func TestDeployActionPreviewSkipsMutationPipelineAndSubscriptionRequirement(t *testing.T) {
+	t.Parallel()
+
+	projectConfig, err := project.Parse(t.Context(), `
+name: preview-project
+services:
+  assistant:
+    host: azure.ai.agent
+    project: .
+`)
+	require.NoError(t, err)
+
+	cmd := NewDeployCmd()
+	flags := NewDeployFlags(cmd, &internal.GlobalCommandOptions{})
+	require.NoError(t, cmd.ParseFlags([]string{"--all", "--preview"}))
+
+	projectManager := &mockDeployProjectManager{}
+	target := &mockPreviewServiceTarget{
+		supports: true,
+		preview: &azdext.ServiceTargetPreview{
+			Target: azdext.ServiceTargetPreviewTarget{
+				Type: "Microsoft Foundry hosted agent",
+				Name: "assistant",
+			},
+			Source:           "azure.yaml",
+			Action:           "create",
+			RemoteComparison: "unavailableUntilProvision",
+			Changes:          []azdext.ServiceTargetPreviewChange{},
+		},
+	}
+	serviceManager := &mockDeployServiceManager{previewTarget: target}
+	var writer bytes.Buffer
+	action := &DeployAction{
+		flags:          flags,
+		projectConfig:  projectConfig,
+		env:            environment.New("fresh"),
+		projectManager: projectManager,
+		serviceManager: serviceManager,
+		importManager:  project.NewImportManager(nil),
+		console:        mockinput.NewMockConsole(),
+		formatter:      &output.JsonFormatter{},
+		writer:         &writer,
+	}
+
+	result, err := action.Run(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "Deployment preview completed. No changes were made.", result.Message.Header)
+	require.Equal(t, 1, target.calls)
+	require.Equal(t, 1, target.previewInitializeCalls)
+	require.Zero(t, target.initializeCalls)
+	require.Zero(t, serviceManager.packageCalls)
+	require.Zero(t, serviceManager.publishCalls)
+	require.Zero(t, serviceManager.deployCalls)
+
+	var outputResult DeploymentPreviewResult
+	require.NoError(t, json.Unmarshal(writer.Bytes(), &outputResult))
+	require.Equal(t, "assistant", outputResult.Services["assistant"].Target.Name)
+	require.Equal(
+		t,
+		"unavailableUntilProvision",
+		outputResult.Services["assistant"].RemoteComparison,
+	)
+}
+
+func TestDeployActionPreviewRejectsUnsupportedTargetBeforeInvocation(t *testing.T) {
+	t.Parallel()
+
+	projectConfig, err := project.Parse(t.Context(), `
+name: preview-project
+services:
+  api:
+    host: custom.target
+    project: .
+`)
+	require.NoError(t, err)
+
+	cmd := NewDeployCmd()
+	flags := NewDeployFlags(cmd, &internal.GlobalCommandOptions{})
+	require.NoError(t, cmd.ParseFlags([]string{"--all", "--preview"}))
+
+	projectManager := &mockDeployProjectManager{}
+	target := &mockPreviewServiceTarget{supports: false}
+	serviceManager := &mockDeployServiceManager{previewTarget: target}
+	action := &DeployAction{
+		flags:          flags,
+		projectConfig:  projectConfig,
+		env:            environment.New("fresh"),
+		projectManager: projectManager,
+		serviceManager: serviceManager,
+		importManager:  project.NewImportManager(nil),
+		console:        mockinput.NewMockConsole(),
+		formatter:      &output.NoneFormatter{},
+		writer:         io.Discard,
+	}
+
+	_, err = action.Run(t.Context())
+	require.ErrorContains(t, err, `service "api" uses target "custom.target"`)
+	require.Zero(t, target.calls)
+	require.Zero(t, target.previewInitializeCalls)
+	require.Zero(t, target.initializeCalls)
+	require.Zero(t, serviceManager.packageCalls)
+	require.Zero(t, serviceManager.publishCalls)
+	require.Zero(t, serviceManager.deployCalls)
+}
+
+func TestDeployActionPreviewSupportsCurrentFoundryProjectShape(t *testing.T) {
+	t.Parallel()
+
+	projectConfig, err := project.Parse(t.Context(), `
+name: preview-project
+services:
+  ai-project:
+    host: azure.ai.project
+  assistant:
+    host: azure.ai.agent
+    project: .
+    uses:
+      - ai-project
+`)
+	require.NoError(t, err)
+
+	cmd := NewDeployCmd()
+	flags := NewDeployFlags(cmd, &internal.GlobalCommandOptions{})
+	require.NoError(t, cmd.ParseFlags([]string{"--all", "--preview"}))
+
+	projectManager := &mockDeployProjectManager{}
+	projectTarget := &mockPreviewServiceTarget{
+		supports: true,
+		preview: &azdext.ServiceTargetPreview{
+			Target: azdext.ServiceTargetPreviewTarget{
+				Type: "Microsoft Foundry project",
+				Name: "ai-project",
+			},
+			Source:           "azure.yaml",
+			Action:           "skip",
+			RemoteComparison: "notApplicable",
+			Changes:          []azdext.ServiceTargetPreviewChange{},
+		},
+	}
+	agentTarget := &mockPreviewServiceTarget{
+		supports: true,
+		preview: &azdext.ServiceTargetPreview{
+			Target: azdext.ServiceTargetPreviewTarget{
+				Type: "Microsoft Foundry hosted agent",
+				Name: "assistant",
+			},
+			Source:           "azure.yaml",
+			Action:           "create",
+			RemoteComparison: "unavailableUntilProvision",
+			Changes:          []azdext.ServiceTargetPreviewChange{},
+		},
+	}
+	serviceManager := &mockDeployServiceManager{
+		previewTargets: map[project.ServiceTargetKind]project.ServiceTarget{
+			"azure.ai.project": projectTarget,
+			"azure.ai.agent":   agentTarget,
+		},
+	}
+	var writer bytes.Buffer
+	action := &DeployAction{
+		flags:          flags,
+		projectConfig:  projectConfig,
+		env:            environment.New("fresh"),
+		projectManager: projectManager,
+		serviceManager: serviceManager,
+		importManager:  project.NewImportManager(nil),
+		console:        mockinput.NewMockConsole(),
+		formatter:      &output.JsonFormatter{},
+		writer:         &writer,
+	}
+
+	_, err = action.Run(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, projectTarget.calls)
+	require.Equal(t, 1, agentTarget.calls)
+	require.Equal(t, 1, projectTarget.previewInitializeCalls)
+	require.Equal(t, 1, agentTarget.previewInitializeCalls)
+	require.Zero(t, projectTarget.initializeCalls)
+	require.Zero(t, agentTarget.initializeCalls)
+	require.Zero(t, serviceManager.packageCalls)
+	require.Zero(t, serviceManager.publishCalls)
+	require.Zero(t, serviceManager.deployCalls)
+
+	var outputResult DeploymentPreviewResult
+	require.NoError(t, json.Unmarshal(writer.Bytes(), &outputResult))
+	require.Len(t, outputResult.Services, 2)
+	require.Equal(t, "skip", outputResult.Services["ai-project"].Action)
+	require.Equal(t, "create", outputResult.Services["assistant"].Action)
+}
+
+func TestDisplayServiceDeploymentPreviewsIncludesBeforeAndAfterValues(t *testing.T) {
+	t.Parallel()
+
+	console := mockinput.NewMockConsole()
+	services := []*project.ServiceConfig{{Name: "assistant"}}
+	displayServiceDeploymentPreviews(t.Context(), console, services, map[string]*azdext.ServiceTargetPreview{
+		"assistant": {
+			Target: azdext.ServiceTargetPreviewTarget{
+				Type: "Microsoft Foundry hosted agent",
+				Name: "assistant",
+			},
+			Action:           "createVersion",
+			RemoteComparison: "compared",
+			Changes: []azdext.ServiceTargetPreviewChange{{
+				Group:  "resources",
+				Field:  "cpu",
+				Change: "update",
+				Before: "0.5",
+				After:  "1",
+			}},
+		},
+	})
+
+	rendered := strings.Join(console.Output(), "\n")
+	require.Contains(t, rendered, `resources.cpu: "0.5" => "1"`)
 }
 
 func newDeployActionForTimeoutTest(
