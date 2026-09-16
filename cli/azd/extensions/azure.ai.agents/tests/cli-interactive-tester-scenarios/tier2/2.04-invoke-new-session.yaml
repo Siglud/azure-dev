@@ -2,8 +2,8 @@
 #
 # A SESSION and a CONVERSATION are distinct concepts. For the responses-protocol
 # agent (Basic Responses), multi-turn memory is bound to the CONVERSATION, not the
-# session: `--new-session` starts a fresh session but reuses the saved conversation
-# (memory persists), while `--new-conversation` is what actually resets memory.
+# session: `--new-session` resets both IDs and memory, while
+# `--new-conversation` resets conversation memory but retains the session.
 #
 # Precondition: 2.00-setup-deploy-shared-agent.yaml has been run successfully.
 name: "invoke-session-vs-conversation"
@@ -20,9 +20,11 @@ pre:
     continue_on_error: true
 
 goals:
-  - "Run: azd ai agent invoke \"My name is Quinn. Remember it.\" and wait for a response."
-  - "Run: azd ai agent invoke \"What is my name?\" and confirm the agent recalls 'Quinn' (the persisted session and conversation were reused, so multi-turn memory works)."
-  - "Run: azd ai agent invoke --new-session \"What is my name?\" and confirm the agent STILL recalls 'Quinn'. This is EXPECTED, not a bug: a SESSION and a CONVERSATION are distinct concepts. For this responses-protocol agent, multi-turn memory is bound to the CONVERSATION, not the session. --new-session starts a fresh session but reuses the saved conversation, so memory persists."
-  - "Run: azd ai agent invoke --new-conversation \"What is my name?\" and confirm the agent does NOT recall 'Quinn'. This is the true memory reset: --new-conversation discards the conversation that holds multi-turn memory."
+  - "Run: azd ai agent invoke \"My name is Quinn. Remember it.\" and wait for a response. Record the session and conversation IDs."
+  - "Run: azd ai agent invoke \"What is my name?\" and confirm the agent recalls 'Quinn' and both IDs are unchanged."
+  - "Run: azd ai agent invoke --new-session \"What is my name?\" and confirm the agent does NOT recall 'Quinn'. Verify both the session ID and conversation ID differ from the previous invoke. Record the new IDs."
+  - "Run: azd ai agent invoke \"My name is Quinn. Remember it.\" and confirm both IDs are reused."
+  - "Run: azd ai agent invoke --new-conversation \"What is my name?\" and confirm the agent does NOT recall 'Quinn'. Verify the conversation ID changes but the session ID stays the same. Record the IDs."
+  - "Run: azd ai agent invoke --new-session --new-conversation \"Hello!\" and confirm it succeeds with both IDs different from the previous invoke."
   - "Take a screenshot after each invoke."
-  - "Report a finding if: the first two invokes fail to establish/recall memory; OR --new-conversation still recalls 'Quinn' (memory was not reset). Do NOT report a finding merely because --new-session still recalled 'Quinn' — that is the expected session-vs-conversation distinction."
+  - "Report a finding if any memory or ID assertion fails, or if using both reset flags is rejected. Compare actual assigned session IDs, not a '(new)' placeholder."

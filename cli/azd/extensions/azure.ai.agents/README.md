@@ -702,6 +702,22 @@ The target must be active, declare `invocations_ws/1.0.0`, and include
 instructions, tools, and other conversation controls belong to the target;
 the wrapper owns audio, voice, store, avatar, and greeting configuration.
 
+## Starting a fresh invocation
+
+Consecutive `azd ai agent invoke` calls reuse the saved session and conversation.
+Use `azd ai agent invoke "Hello!" --new-session` to start fresh: for Responses
+agents, this resets both the session and conversation, including conversation
+history. Prompt agents also start a fresh conversation.
+
+For hosted Responses agents, `--new-conversation` alone starts a new conversation
+while retaining the current session. `--new-session --new-conversation` remains
+valid, but the second flag is redundant. Invocations and A2A agents keep memory
+in the session, so use `--new-session` to reset them.
+
+`--new-session` cannot be combined with `--session-id` or `--conversation-id`.
+`--new-conversation` cannot be combined with `--conversation-id`. Remove the
+reset flag when you want to reuse an explicit ID.
+
 ## Session idle timeout
 
 A hosted agent's runtime session sandbox is suspended by Foundry after a period

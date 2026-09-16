@@ -54,6 +54,10 @@ type invokeFlags struct {
 	noWait          bool
 }
 
+func (f *invokeFlags) startsNewConversation() bool {
+	return f.newSession || f.newConversation
+}
+
 // outputRaw is the sentinel value of the inherited --output flag that selects
 // raw mode. In raw mode the full HTTP response (status line, headers, and body)
 // is dumped to stdout without any parsing or formatting, mirroring `curl -i`.
@@ -118,7 +122,11 @@ instead of Foundry. The a2a protocol is remote-only and cannot be used with
 --local.
 
 Sessions are persisted per-agent — consecutive invokes reuse the same
-session automatically. Pass --new-session to force a reset.
+session automatically. Pass --new-session to start a new session and a new
+conversation. For Responses agents, --new-conversation alone resets the
+conversation while keeping the current session. Passing both flags is valid
+but unnecessary. Neither reset accepts --conversation-id; --new-session
+also cannot be combined with --session-id.
 
 Use --version to invoke a specific deployed agent version. When provided,
 azd creates or reuses a hosted agent session backed by that version.
@@ -256,6 +264,9 @@ This option does not provide crash recovery or automatic reconnection.`,
 			if err := validateInvokeVersionFlags(cmd, flags); err != nil {
 				return err
 			}
+			if err := validateInvokeSessionFlags(cmd, flags); err != nil {
+				return err
+			}
 
 			if flags.protocol != "" {
 				p := agent_api.AgentProtocol(flags.protocol)
@@ -343,7 +354,7 @@ This option does not provide crash recovery or automatic reconnection.`,
 		"Request timeout in seconds (0 for no timeout)",
 	)
 	cmd.Flags().StringVarP(&flags.session, "session-id", "s", "", "Explicit session ID override")
-	cmd.Flags().BoolVar(&flags.newSession, "new-session", false, "Force a new session (discard saved one)")
+	cmd.Flags().BoolVar(&flags.newSession, "new-session", false, "Start a new session and conversation (discard saved IDs)")
 	cmd.Flags().StringVar(&flags.conversation, "conversation-id", "", "Explicit conversation ID override")
 	cmd.Flags().BoolVar(&flags.newConversation, "new-conversation", false, "Force a new conversation (discard saved one)")
 	addUserIdentityFlag(cmd, &flags.userIdentityFlags)
@@ -401,6 +412,29 @@ This option does not provide crash recovery or automatic reconnection.`,
 	})
 
 	return cmd
+}
+
+func validateInvokeSessionFlags(cmd *cobra.Command, flags *invokeFlags) error {
+	if flags.newSession && cmd.Flags().Changed("session-id") {
+		return exterrors.Validation(
+			exterrors.CodeConflictingArguments,
+			"cannot use --new-session with --session-id",
+			"remove --session-id to start a new session, or omit --new-session to reuse the specified session",
+		)
+	}
+	if flags.startsNewConversation() && cmd.Flags().Changed("conversation-id") {
+		resetFlag := "--new-conversation"
+		if flags.newSession {
+			resetFlag = "--new-session"
+		}
+		return exterrors.Validation(
+			exterrors.CodeConflictingArguments,
+			fmt.Sprintf("cannot use %s with --conversation-id", resetFlag),
+			"remove --conversation-id to start a new conversation, "+
+				"or omit the reset flags to reuse the specified conversation",
+		)
+	}
+	return nil
 }
 
 func validateInvokeVersionFlags(cmd *cobra.Command, flags *invokeFlags) error {
@@ -1045,7 +1079,7 @@ func (a *InvokeAction) responsesLocal(ctx context.Context) error {
 			log.Printf("invoke local: failed to resolve session ID: %v", err)
 		}
 		convID, err = resolveStoredID(
-			ctx, azdClient, agentKey, a.flags.conversation, a.flags.newConversation, "conversations", true,
+			ctx, azdClient, agentKey, a.flags.conversation, a.flags.startsNewConversation(), "conversations", true,
 		)
 		if err != nil {
 			log.Printf("invoke local: failed to resolve conversation ID: %v", err)
@@ -1530,7 +1564,7 @@ func (a *InvokeAction) responsesRemote(ctx context.Context) error {
 			rc.azdClient,
 			agentKey,
 			a.flags.conversation,
-			a.flags.newConversation,
+			a.flags.startsNewConversation(),
 			rc.projectEndpoint,
 			rc.bearerToken,
 			rc.name,
