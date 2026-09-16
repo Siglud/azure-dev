@@ -546,6 +546,7 @@ func TestValidateExtension_AllValidCapabilities(t *testing.T) {
 					LifecycleEventsCapability,
 					McpServerCapability,
 					ServiceTargetProviderCapability,
+					ServiceTargetPreviewCapability,
 					FrameworkServiceProviderCapability,
 					MetadataCapability,
 					ProvisioningProviderCapability,
@@ -559,6 +560,32 @@ func TestValidateExtension_AllValidCapabilities(t *testing.T) {
 	result := validateExtension(ext, false)
 	require.True(t, result.Valid)
 	require.Empty(t, errorsOnly(result.Issues))
+}
+
+func TestValidateExtension_ServiceTargetPreviewRequiresProvider(t *testing.T) {
+	t.Parallel()
+
+	ext := &ExtensionMetadata{
+		Id:          "pub.ext",
+		DisplayName: "Test",
+		Description: "Test",
+		Versions: []ExtensionVersion{{
+			Version:      "1.0.0",
+			Capabilities: []CapabilityType{ServiceTargetPreviewCapability},
+			Artifacts:    validArtifacts(),
+		}},
+	}
+
+	result := validateExtension(ext, false)
+	require.False(t, result.Valid)
+	require.Contains(
+		t,
+		errorsOnly(result.Issues),
+		ValidationIssue{
+			Severity: ValidationError,
+			Message:  "versions[0]: capability 'service-target-preview' requires 'service-target-provider'",
+		},
+	)
 }
 
 func TestValidateExtension_AllValidPlatforms(t *testing.T) {

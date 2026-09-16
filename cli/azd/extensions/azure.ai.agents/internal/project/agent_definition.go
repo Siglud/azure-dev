@@ -921,7 +921,10 @@ func agentDefinitionFromStruct(
 	if ca.Image != "" && !containerref.IsValid(ca.Image) {
 		return agent_yaml.ContainerAgent{}, false, exterrors.Validation(
 			exterrors.CodeInvalidAgentManifest,
-			fmt.Sprintf("invalid container image reference in agent service config: %q", ca.Image),
+			fmt.Sprintf(
+				"invalid container image reference in agent service config: %q",
+				redactDeployPreviewURL(ca.Image),
+			),
 			"use a valid image reference, e.g. 'myregistry.azurecr.io/image:v1'",
 		)
 	}
@@ -1086,7 +1089,10 @@ func parseContainerAgentYAML(data []byte) (agent_yaml.ContainerAgent, bool, erro
 	if agentDef.Image != "" && !containerref.IsValid(agentDef.Image) {
 		return agent_yaml.ContainerAgent{}, false, exterrors.Validation(
 			exterrors.CodeInvalidAgentManifest,
-			fmt.Sprintf("invalid container image reference in agent.yaml: %q", agentDef.Image),
+			fmt.Sprintf(
+				"invalid container image reference in agent.yaml: %q",
+				redactDeployPreviewURL(agentDef.Image),
+			),
 			"use a valid image reference, e.g. 'myregistry.azurecr.io/image:v1'",
 		)
 	}

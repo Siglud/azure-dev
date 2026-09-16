@@ -5,6 +5,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 )
@@ -13,6 +15,12 @@ import (
 // A project service carries model deployments.
 // It may also carry an endpoint for an existing project.
 const aiProjectHost = "azure.ai.project"
+
+const (
+	serviceTargetPreviewRequestMetadataKey = "azd.serviceTarget.preview"
+	serviceTargetPreviewResultMetadataKey  = "azd.serviceTarget.previewResult"
+	serviceTargetPreviewArtifactLocation   = "azd://service-target-preview"
+)
 
 var _ azdext.ServiceTargetProvider = (*projectServiceTarget)(nil)
 
@@ -97,5 +105,39 @@ func (p *projectServiceTarget) Deploy(
 	targetResource *azdext.TargetResource,
 	progress azdext.ProgressReporter,
 ) (*azdext.ServiceDeployResult, error) {
+	if targetResource != nil &&
+		targetResource.GetMetadata()[serviceTargetPreviewRequestMetadataKey] == "true" {
+		preview := struct {
+			Target struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			} `json:"target"`
+			Source           string `json:"source"`
+			Action           string `json:"action"`
+			RemoteComparison string `json:"remoteComparison"`
+			Changes          []any  `json:"changes"`
+		}{
+			Source:           "azure.yaml",
+			Action:           "skip",
+			RemoteComparison: "notApplicable",
+			Changes:          []any{},
+		}
+		preview.Target.Type = "Microsoft Foundry project"
+		preview.Target.Name = serviceConfig.GetName()
+		payload, err := json.Marshal(preview)
+		if err != nil {
+			return nil, fmt.Errorf("serialize Foundry project deployment preview: %w", err)
+		}
+		return &azdext.ServiceDeployResult{
+			Artifacts: []*azdext.Artifact{{
+				Kind:         azdext.ArtifactKind_ARTIFACT_KIND_CONFIG,
+				Location:     serviceTargetPreviewArtifactLocation,
+				LocationKind: azdext.LocationKind_LOCATION_KIND_REMOTE,
+				Metadata: map[string]string{
+					serviceTargetPreviewResultMetadataKey: string(payload),
+				},
+			}},
+		}, nil
+	}
 	return &azdext.ServiceDeployResult{}, nil
 }

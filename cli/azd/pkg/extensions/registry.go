@@ -48,6 +48,8 @@ const (
 	McpServerCapability CapabilityType = "mcp-server"
 	// Service target providers enable extensions to package, publish, and deploy to custom service targets
 	ServiceTargetProviderCapability CapabilityType = "service-target-provider"
+	// Service target preview enables service target providers to preview deployment changes without mutating resources
+	ServiceTargetPreviewCapability CapabilityType = "service-target-preview"
 	// Framework service providers enable extensions to provide custom language frameworks and build systems
 	FrameworkServiceProviderCapability CapabilityType = "framework-service-provider"
 	// Metadata capability enables extensions to provide comprehensive metadata about their commands and capabilities

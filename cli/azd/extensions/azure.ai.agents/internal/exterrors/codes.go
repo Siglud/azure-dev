@@ -42,6 +42,7 @@ const (
 	CodeModelDeploymentNotFound   = "model_deployment_not_found"
 	CodeConflictingArguments      = "conflicting_arguments"
 	CodeInvalidPositionalArg      = "invalid_positional_arg"
+	CodeUnsupportedDeployPreview  = "unsupported_deploy_preview"
 )
 
 // Error codes for malformed locally saved protocol resource state.

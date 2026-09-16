@@ -121,6 +121,7 @@ before the prompt agent. Connection objects remain unsupported on any agent.
 Deploy Agents through the normal azd project lifecycle:
 
 - `azd deploy <service>` deploys the selected `azure.ai.agent` service.
+- `azd deploy <service> --preview` compares a hosted agent without deploying it.
 - `azd deploy --all` deploys all services, with ordering defined by `uses`.
 - `azd up` provisions and deploys the project.
 
@@ -138,6 +139,52 @@ not by a definition-file path. A sibling `toolbox.yaml` is not automatically
 deployed: declare a Toolbox service and add it to `uses`. Deploy dependencies
 first or use `azd deploy --all`; a targeted Agent deployment does not deploy its
 dependencies automatically.
+
+### Previewing a hosted-agent deployment
+
+Use `azd deploy <service> --preview` to validate and compare a hosted-agent
+deployment without packaging source, building or pushing an image, creating an
+agent version, patching endpoint settings, or changing the azd environment:
+
+```bash
+azd deploy my-agent --preview
+azd deploy my-agent --preview --output json
+```
+
+The preview reports metadata, protocols, CPU and memory, environment-variable
+names, model deployment bindings, endpoint/card configuration, policies, and
+artifact work. Environment-variable values are redacted except for model
+deployment names. Credential-bearing image URLs are redacted before display.
+
+Current projects read the agent definition directly from the
+`azure.ai.agent` service in `azure.yaml`, including local `$ref` definitions.
+Legacy initialized projects that keep the deployable definition in
+`agent.yaml` or under the service's deprecated `config:` block remain
+supported. `agent.manifest.yaml` is an initialization/template input, not a
+deploy-time definition, and is never required by preview. There is no legacy
+`agents.yaml` deploy file.
+
+For a newly initialized project that has not been provisioned,
+`FOUNDRY_PROJECT_ENDPOINT` may not exist yet. Preview still returns a local
+create plan with `remoteComparison: unavailableUntilProvision` and exits
+successfully. Once the endpoint exists, a remote 404 is reported as
+`remoteComparison: notFound`; an existing agent is compared with its latest
+version. Even when no semantic configuration differences exist, a real deploy
+would still create a new immutable agent version.
+
+Preview currently supports hosted agents only. Every service selected by
+`--all` must use a preview-capable service target. `--from-package` and an
+explicit `--timeout` are rejected with `--preview` because preview performs no
+package or timed deployment work. Preview also rejects hosted agents that
+declare `memoryStores` or use simple Activity mode because a real deployment
+can create companion Memory Store or Azure Bot resources that the current
+preview cannot compare safely. Digital Worker Activity agents do not manage an
+Azure Bot and remain supported.
+
+Preview requires an existing local azd environment but does not create one,
+change the selected/default environment, run project or service deploy hooks,
+or write deployment values. Run `azd env new <name>` first when the project has
+not been initialized.
 
 ## Running Local Agents
 
