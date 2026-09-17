@@ -77,7 +77,7 @@ func (a *InvokeAction) runPromptInvoke(ctx context.Context, pctx *promptServiceC
 	}
 
 	var previousResponseID string
-	if azdClient != nil && !a.flags.newConversation {
+	if azdClient != nil && !a.flags.startsNewConversation() {
 		if val, getErr := getContextValueWithFallback(ctx, azdClient, "conversations", agentKey, nil); getErr == nil {
 			previousResponseID = val
 		}
