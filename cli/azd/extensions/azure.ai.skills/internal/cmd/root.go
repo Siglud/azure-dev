@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext/helpformat"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -55,6 +56,13 @@ a Foundry project.`,
 	rootCmd.AddCommand(newListCommand(extCtx))
 	rootCmd.AddCommand(newDownloadCommand(extCtx))
 	rootCmd.AddCommand(newDeleteCommand(extCtx))
+
+	rootCmd.Example = `  # Create a reusable skill from a SKILL.md file
+  azd ai skill create greet-user --file ./SKILL.md
+
+  # Download a skill for local editing
+  azd ai skill download greet-user`
+	helpformat.Install(rootCmd, "azd ai", skillHelpFooter)
 
 	return rootCmd
 }

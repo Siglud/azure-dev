@@ -83,6 +83,11 @@ see [Extension Flag Architecture Spec](../design/extension-flag-architecture.md)
 
 #### Shared Go help formatter
 
+First-party `azd ai` commands follow the
+[AI command help conventions](../style-guidelines/azd-style-guide.md#ai-command-help).
+Keep descriptions and examples in Cobra metadata, retain SDK usage wrappers,
+and render help without authentication or configuration reads.
+
 The public `github.com/azure/azure-dev/cli/azd/pkg/azdext/helpformat` package
 provides opt-in help templates for Cobra command trees:
 

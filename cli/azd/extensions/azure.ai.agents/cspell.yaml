@@ -1,6 +1,6 @@
 import: ../../.vscode/cspell.yaml
 overrides:
-  - filename: ["internal/helpformat/*.go", "internal/cmd/root.go"]
+  - filename: "internal/cmd/root.go"
     words:
       - helpformat
 words:
