@@ -81,6 +81,44 @@ see [Extension Flag Architecture Spec](../design/extension-flag-architecture.md)
 - Provide contextual guidance within established command flows
 - Maintain documentation consistency across core and extended features
 
+#### Shared Go help formatter
+
+The public `github.com/azure/azure-dev/cli/azd/pkg/azdext/helpformat` package
+provides opt-in help templates for Cobra command trees:
+
+```go
+root, _ := azdext.NewExtensionRootCommand(azdext.ExtensionCommandOptions{
+    Name: "example",
+    Short: "Example extension commands",
+})
+helpformat.Install(root, "azd", "More Information:\n  See https://aka.ms/azd.")
+```
+
+Pass the host namespace preceding the extension's command name as `commandPrefix`
+(for example, `"azd ai"` for an AI extension). For a subtree already attached to
+the host's Cobra command tree, pass `""` to avoid duplicating the command path.
+The optional plain-text footer appears only on the command passed to `Install`.
+
+The inherited templates read commands, flags, examples, and color settings when
+help is rendered, so commands can be registered before or after installation.
+They preserve the SDK's usage function and per-command `RegisterFlagOptions`
+overrides, use Cobra's configured output writers, and leave command metadata
+unchanged. Explicit descendant templates and custom help/usage functions are not
+replaced; those customizations remain responsible for rendering help.
+
+Use `Short` and `Long` for descriptions and `Example` for shell examples. Standalone
+title lines such as `More Information:` become headings, while `# ` example
+captions become prose. Command quotes, internal spacing, and continuation lines
+are preserved. Persistent flags and the `help` and `docs` flags appear under
+**Global Flags**.
+
+This package ships in the normal azd Go module, not as a separate module or
+generated source copy. Independently released extensions must wait for a
+published SDK semver containing the package before importing it and upgrading
+their dependency. Do not substitute a guessed version, a committed local
+replacement, or copied formatter source for that release prerequisite. See
+[Go Module Versioning](../sdk-versioning.md) for the release process.
+
 ### 4. **Template and Resource Integration**
 
 - Leverage existing template system for new resource types

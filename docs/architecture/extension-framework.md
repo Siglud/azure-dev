@@ -84,6 +84,19 @@ Extensions use two structured error types:
 
 Error precedence: ServiceError → LocalError → azcore.ResponseError → gRPC auth → fallback
 
+## Shared Go Command Help
+
+The public `pkg/azdext/helpformat` package is an opt-in, in-process SDK utility
+for Cobra help rendering, not a gRPC capability. It installs inherited templates
+while retaining the SDK usage function that applies per-command flag overrides.
+Core command subtrees and extensions can use the same implementation without
+generated copies. Existing commands are not automatically migrated.
+
+The formatter is released with the azd Go module. Independently released
+extensions need a published SDK semver containing the package before adopting
+it. See the [shared formatter guide](../../cli/azd/docs/extensions/extensions-style-guide.md#shared-go-help-formatter)
+and [SDK versioning](../../cli/azd/docs/sdk-versioning.md).
+
 ## First-Party Extensions
 
 First-party extensions live in `cli/azd/extensions/` and are registered in `cli/azd/extensions/registry.json`.
