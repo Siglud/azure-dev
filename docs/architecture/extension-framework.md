@@ -95,8 +95,24 @@ human-readable message plus structured data. The SDK handles each preview on a
 fresh provider without invoking deployment initialization or using its instance
 cache; preview is not dispatched as a deployment.
 
-This is the SDK prerequisite only. CLI command integration, host-side capability
-checks, and first-party preview implementations are separate work.
+`azd deploy --preview` checks the advertised capability and sends only a preview
+request. It retains normal authentication, but bypasses deployment hooks, generated
+service imports, framework initialization, packaging, and deployment. Environment
+reads use detached snapshots without local hydration, normalization writes, or
+lock-file creation. Environment mutation requests from the extension are rejected.
+
+The first-party implementation supports hosted Foundry agents (`azure.ai.agent`)
+defined in the unified service-level `azure.yaml` format only. Legacy agent files
+and deprecated nested `config:` definitions are unsupported for preview; ordinary
+deployment remains unchanged. Unused legacy files do not override a modern service.
+Build/code artifacts that cannot be determined without building or uploading are
+reported as unknown, not as unchanged. See the
+[agents extension guide](../../cli/azd/extensions/azure.ai.agents/README.md).
+
+This implementation is draft work dependent on
+[Azure/azure-dev#10055](https://github.com/Azure/azure-dev/pull/10055) merging and
+an SDK release containing its contracts. It is not available in a released CLI
+or extension merely because the SDK prerequisite exists.
 See the [SDK contract](../../cli/azd/docs/extensions/extension-framework.md#deployment-preview-sdk-contract)
 for registration and provider requirements.
 

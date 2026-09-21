@@ -122,7 +122,7 @@ func (s *ServiceTargetService) onRegisterRequest(
 		console input.Console,
 		prompter prompt.Prompter,
 	) project.ServiceTarget {
-		return project.NewExternalServiceTarget(
+		return project.NewExternalServiceTargetWithPreviewSupport(
 			hostType,
 			project.ServiceTargetKind(hostType),
 			extension,
@@ -130,6 +130,7 @@ func (s *ServiceTargetService) onRegisterRequest(
 			console,
 			prompter,
 			s.lazyEnv,
+			req.GetSupportsPreview(),
 		)
 	})
 

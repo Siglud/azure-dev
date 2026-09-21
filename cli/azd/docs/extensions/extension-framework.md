@@ -1570,10 +1570,15 @@ if err := host.Run(ctx); err != nil {
 
 ## Deployment Preview SDK Contract
 
-The SDK provides an optional service-target preview contract. These APIs are
-prerequisites for deployment preview; CLI command integration and first-party
-provider implementations are separate work. Registering this capability alone
-does not enable `azd deploy --preview`.
+The SDK provides an optional service-target preview contract for
+`azd deploy --preview`. The host checks capability support before forwarding a
+preview request; unsupported services fail explicitly instead of deploying.
+Normal login and `--no-prompt` authentication behavior still apply.
+
+This is draft work depending on [#10055](https://github.com/Azure/azure-dev/pull/10055)
+merging and an SDK release containing its APIs. The agents extension uses a
+temporary local SDK replacement for draft validation, which must be removed in
+favor of that published version before the implementation becomes merge-ready.
 
 Register with `ExtensionHost.WithServiceTargetPreview` and implement
 `ServiceTargetPreviewProvider` alongside `ServiceTargetProvider`:
@@ -1590,8 +1595,9 @@ The SDK advertises `supports_preview` during service-target registration.
 Existing `WithServiceTarget` registrations and calls to `ServiceTargetManager.Register`
 without the optional capability argument continue to advertise no preview support.
 Registration does not invoke the provider factory to detect the capability.
-Host-side capability checks and command output formatting belong to the later
-CLI integration.
+The command formats structured results for `--output json` without mixing in
+comparison progress or provider text. Text output includes per-service comparison
+progress, which is cleared on success and failure.
 
 For each preview request, the SDK invokes the factory to create a fresh provider
 without reading or updating cached deployment instances or calling `Initialize`.
@@ -1599,6 +1605,23 @@ The factory must return a fresh instance, and `Preview` must be self-contained:
 do not build, package, publish, deploy dependencies, or persist deployment state.
 Provider failures, missing preview implementations, and nil results return errors
 rather than successful empty previews.
+
+The host resolves only services declared in `azure.yaml`; it does not import
+generated Aspire services, run hooks, initialize deployment, build, package,
+publish, provision resources, or deploy dependencies. Environment reads use a
+detached snapshot without hydration, lock files, or persisted normalization.
+Environment mutations and environment listing (which may configure remote stores)
+are rejected during preview. Providers remain responsible for making their own
+remote calls read-only and sanitizing all result data, messages, and errors.
+Authentication may update the normal authentication cache.
+
+The first-party implementation is limited to hosted Foundry agents
+(`host: azure.ai.agent`) using unified service-level `azure.yaml` definitions.
+Legacy agent files and deprecated nested `config:` definitions return a clear
+unsupported error with migration guidance. An unused legacy file does not take
+precedence over modern configuration. Image/build/code paths are compared only
+as far as they can be resolved without artifact creation; unknown future artifacts
+are reported explicitly. See the [agents extension guide](../../extensions/azure.ai.agents/README.md).
 
 ## Developer Artifacts
 
