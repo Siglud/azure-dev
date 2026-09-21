@@ -86,6 +86,7 @@ For extensions that are still in development or preview, consider publishing to 
 - **Extend existing command categories** — Use verb-first structure (e.g., `azd add <resource>`)
 - **Reuse parameter patterns** — Use established flags like `--subscription`, `--name`, `--type`
 - **Integrate with help** — Make your extension discoverable through `azd help`
+- **Reuse Go help formatting** — With an SDK release containing `pkg/azdext/helpformat`, call `helpformat.Install` on your Cobra root instead of copying a renderer. See the [shared formatter guide](../../cli/azd/docs/extensions/extensions-style-guide.md#shared-go-help-formatter) for namespace prefixes, SDK flag overrides, and the release prerequisite.
 - **Error handling** — Use `ServiceError` for Azure API errors and `LocalError` for client-side errors
 - **Telemetry** — Follow pattern-based classification (e.g., `ext.service.<errorCode>`)
 
