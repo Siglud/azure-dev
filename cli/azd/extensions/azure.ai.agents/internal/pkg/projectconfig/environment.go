@@ -18,6 +18,16 @@ func LoadServiceEnvironment(
 	projectRoot string,
 	serviceName string,
 ) (map[string]string, error) {
+	return loadServiceEnvironment(projectRoot, serviceName, false)
+}
+
+// LoadServiceLevelEnvironment reads service-level env without resolving an
+// unused deprecated config block. Callers must first establish a modern source.
+func LoadServiceLevelEnvironment(projectRoot, serviceName string) (map[string]string, error) {
+	return loadServiceEnvironment(projectRoot, serviceName, true)
+}
+
+func loadServiceEnvironment(projectRoot, serviceName string, ignoreLegacyConfig bool) (map[string]string, error) {
 	if projectRoot == "" || serviceName == "" {
 		return nil, nil
 	}
@@ -39,6 +49,9 @@ func LoadServiceEnvironment(
 	entry := document.Services[serviceName]
 	if entry == nil {
 		return nil, nil
+	}
+	if ignoreLegacyConfig {
+		delete(entry, "config")
 	}
 	resolved, err := foundry.ResolveFileRefs(entry, projectRoot)
 	if err != nil {

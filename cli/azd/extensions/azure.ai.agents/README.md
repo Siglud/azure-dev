@@ -118,6 +118,51 @@ before the prompt agent. Connection objects remain unsupported on any agent.
 
 ## Deploying Agents
 
+### Deployment preview (dependent draft)
+
+`azd deploy <service-name> --preview` compares a **hosted** `azure.ai.agent`
+service's effective configuration with the latest agent version in Microsoft
+Foundry. Add `--output json` for structured results. Creating an absent agent,
+configuration changes, and no changes are successful preview outcomes; authentication,
+authorization, connectivity, and invalid configuration/response failures are errors.
+Normal azd login is required, including the usual non-interactive behavior with
+`--no-prompt`.
+
+Preview supports only **unified service-level definitions in `azure.yaml`**.
+Deprecated nested `config:`, `agent.yaml`/`agent.yml` definitions,
+`AGENT_DEFINITION_PATH` overrides, and root `$ref` includes that supply a whole
+agent definition are explicitly unsupported. Move the definition into the service
+entry using the [migration guidance](#migrating-legacy-agent-configuration).
+Field/file includes and root fragments that do not supply `kind` remain supported.
+An unused legacy file or nested configuration does not override a valid modern
+definition. Ordinary deployment retains its legacy compatibility.
+
+The comparison shares deployment's request normalization for environment values
+(including model deployment references), CPU/memory, protocols, description,
+metadata, content policies, session settings, and authored endpoint/card settings.
+Values are omitted from text and JSON changes to protect credentials and environment
+values; changed field paths and operations are reported instead.
+
+Prebuilt image passthrough (`docker.imagePassthrough: true`) can be compared directly.
+Build-mode images and code packages are reported as **unknown** until a build/upload
+produces the final artifact. Preview never builds, packages, pushes, uploads, runs
+deployment hooks, deploys dependencies, provisions resources, or writes deployment
+state. It does not claim “no changes” when artifacts or environment inputs remain
+unknown. Mutable image tags are compared as references, not registry digests.
+Infrastructure, dependency resources, and routing to older agent versions are outside
+the comparison's scope.
+
+**Publication blocker:** this draft depends on
+[SDK prerequisite #10055](https://github.com/Azure/azure-dev/pull/10055) and
+[feature issue #8549](https://github.com/Azure/azure-dev/issues/8549).
+The extension module temporarily replaces its azd dependency with `../../` for
+local validation. This is not a released SDK dependency and must not be merged as-is.
+After #10055 merges and an SDK release containing it is published, pin that actual
+release, remove the draft-only `replace`, run `go mod tidy`, and validate this module
+again with `GOWORK=off`. No release version is implied by this draft.
+
+### Normal deployment
+
 Deploy Agents through the normal azd project lifecycle:
 
 - `azd deploy <service>` deploys the selected `azure.ai.agent` service.

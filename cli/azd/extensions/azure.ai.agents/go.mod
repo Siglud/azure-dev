@@ -2,6 +2,10 @@ module azureaiagent
 
 go 1.26.4
 
+// DRAFT ONLY: #10055 must merge and ship an SDK release before this can be removed.
+// Replace the pinned azd requirement with that released version before merging.
+replace github.com/azure/azure-dev/cli/azd => ../../
+
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0

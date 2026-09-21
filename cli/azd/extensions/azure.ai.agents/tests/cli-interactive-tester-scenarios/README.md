@@ -422,6 +422,7 @@ as their `cwd`.
 | `tier2/2.11-endpoint-update.yaml` | `endpoint update` |
 | `tier2/2.12-run-local-and-invoke-local.yaml` | `run` + `invoke --local` (two sessions) |
 | `tier2/2.13-invoke-latency.yaml` | Default-on platform latency, `--debug-latency=false`, and raw output against the shared Responses agent |
+| `tier2/2.14-deploy-preview.yaml` | Modern hosted deployment preview (text/JSON), unknown code artifact, and unchanged project/deployment state; requires preview-capable development builds |
 | `tier2/2.15-doctor-provisioned-all-pass.yaml` | `doctor` (all checks pass) |
 | `tier2/2.16-endpoint-show.yaml` | `endpoint show` (agent endpoint details) |
 | `tier2/2.17-code-download.yaml` | `code download` (positive-path: downloads agent source code) |
