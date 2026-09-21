@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext/helpformat"
 	"github.com/spf13/cobra"
 )
 
@@ -55,6 +56,14 @@ to promote a version.`,
 	rootCmd.AddCommand(newVersionCommand(&extCtx.OutputFormat))
 	rootCmd.AddCommand(newMetadataCommand(rootCmd))
 	rootCmd.AddCommand(azdext.NewListenCommand(configureExtensionHost))
+
+	rootCmd.Example = `  # Create a toolbox from a local definition
+  azd ai toolbox create research --from-file ./toolbox.yaml
+
+  # Inspect its versions before promoting a default
+  azd ai toolbox versions list research
+  azd ai toolbox publish research 2`
+	helpformat.Install(rootCmd, "azd ai", toolboxHelpFooter)
 
 	return rootCmd
 }

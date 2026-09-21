@@ -6,9 +6,8 @@ package cmd
 import (
 	"fmt"
 
-	"azureaiagent/internal/helpformat"
-
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext/helpformat"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )

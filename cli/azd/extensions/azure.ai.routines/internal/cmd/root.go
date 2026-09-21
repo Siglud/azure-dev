@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"azure.ai.routines/internal/pkg/routines"
+	"github.com/azure/azure-dev/cli/azd/pkg/azdext/helpformat"
 
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
 	"github.com/spf13/cobra"
@@ -49,6 +50,14 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.AddCommand(newRoutineDisableCommand(extCtx))
 	rootCmd.AddCommand(newRoutineDispatchCommand(extCtx))
 	rootCmd.AddCommand(newRoutineRunCommand(extCtx))
+
+	rootCmd.Example = `  # Create a routine from a manifest
+  azd ai routine create nightly-summary --file ./routine.yaml
+
+  # Trigger it manually and inspect execution history
+  azd ai routine dispatch nightly-summary
+  azd ai routine run list nightly-summary`
+	helpformat.Install(rootCmd, "azd ai", routineHelpFooter)
 
 	return rootCmd
 }

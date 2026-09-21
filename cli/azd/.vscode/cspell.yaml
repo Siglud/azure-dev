@@ -178,7 +178,7 @@ dictionaryDefinitions:
 dictionaries:
   - azdProjectDictionary
 overrides:
-  - filename: "{pkg/azdext/helpformat/*.go,docs/extensions/extensions-style-guide.md}"
+  - filename: "{pkg/azdext/helpformat/*.go,docs/extensions/extensions-style-guide.md,docs/style-guidelines/azd-style-guide.md,cmd/ai_help*.go,extensions/*/internal/cmd/{root,help,help_test}.go}"
     words:
       - helpformat
   - filename: internal/appdetect/aspire_polyglot.go
