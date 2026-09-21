@@ -199,7 +199,7 @@ Metadata requests are unauthenticated when no matching token is set.
 | Variable | Description |
 | --- | --- |
 | `AZD_EXT_TIMEOUT` | Timeout for extension operations, parsed as an integer number of seconds (for example, `10`). Defaults to `5` seconds; this is not a duration string, so values like `10m` are not valid. |
-| `AZD_EXT_DEBUG` | If true, enables debug output for extensions. |
+| `AZD_EXT_DEBUG` | If true, enables debug output for extensions: azd drops the extension startup timeout so a paused process is not cancelled, and the extension host logs gRPC broker traffic to stderr, falling back to `AZD_DEBUG` when this is unset. Extensions served by `azdext.ExtensionHost`, or that call `azdext.WaitForDebugger` themselves, additionally prompt to attach a debugger before running. |
 | `AZD_EXTENSION_CACHE_TTL` | Time-to-live for extension cache entries, parsed with Go's `time.ParseDuration` format (for example, `30m`, `4h`). Defaults to `4h`. |
 
 ## Extension-Specific Variables
@@ -246,6 +246,7 @@ Metadata requests are unauthenticated when no matching token is set.
 | --- | --- |
 | `AZURE_DEV_COLLECT_TELEMETRY` | If false, disables telemetry collection. Telemetry is enabled by default. |
 | `AZURE_DEV_USER_AGENT` | Appends a custom string to the `User-Agent` header sent with Azure requests. It is also inspected for [AI agent detection](#ai-agent-detection) using case-insensitive substring matching. |
+| `AGENCY_SESSION_ID` | Set by Agency when launching subprocesses. Any non-empty value appends the fixed `agency` modifier to telemetry's `execution.environment`, preserving the primary environment (for example, `GitHub Copilot CLI;agency`). Unset or empty values have no effect. The session ID itself is not emitted. This does not affect agent detection or prompting and is independent of `AZD_DISABLE_AGENT_DETECT`. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Read by the embedded OpenTelemetry SDK, but not supported for customizing azd telemetry. Its attributes are not included in resources exported by azd. |
 | `OTEL_SERVICE_NAME` | Read by the embedded OpenTelemetry SDK, but does not override azd's exported `service.name`, which is always `azd`. |
 | `TRACEPARENT` | The W3C Trace Context `traceparent` header for distributed tracing. Automatically set by `azd` on extension processes for trace propagation. Not typically set by users. |
