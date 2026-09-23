@@ -90,6 +90,25 @@ For extensions that are still in development or preview, consider publishing to 
 - **Integrate with help** — Make your extension discoverable through `azd help`
 - **Error handling** — Use `ServiceError` for Azure API errors and `LocalError` for client-side errors
 - **Telemetry** — Follow pattern-based classification (e.g., `ext.service.<errorCode>`)
+- **Read-only preview providers** — The optional
+  [deployment preview SDK contract](../../cli/azd/docs/extensions/extension-framework.md#deployment-preview-sdk-contract)
+  uses `WithServiceTargetPreview` and `ServiceTargetPreviewProvider`. A preview
+  must work on a fresh provider without `Initialize` and must not build, deploy,
+  or persist deployment state. The host checks the advertised capability before
+  invoking `azd deploy --preview`; normal authentication still applies. Return
+  sanitized text in `Message` and structured data in `Data`, never secrets or
+  credential-bearing URLs. A comparison that finds changes or no changes succeeds;
+  unsupported formats, missing results, and read failures must return errors.
+  The first-party Foundry implementation supports only unified service-level
+  hosted-agent configuration in `azure.yaml`, not legacy agent files or nested
+  `config:` definitions.
+
+> [!NOTE]
+> Deployment preview is draft work depending on
+> [Azure/azure-dev#10055](https://github.com/Azure/azure-dev/pull/10055) and an SDK
+> release containing its APIs. The agents extension's temporary local SDK
+> replacement is for draft validation only; remove it and pin the published SDK
+> before making the implementation merge-ready.
 
 ## Detailed Reference
 

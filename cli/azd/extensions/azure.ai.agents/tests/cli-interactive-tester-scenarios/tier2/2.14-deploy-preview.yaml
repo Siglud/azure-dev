@@ -1,0 +1,27 @@
+# Tier 2 — read-only preview of the shared modern hosted code agent.
+# Requires the development core and extension builds with preview support.
+# Setup incurs Azure cost; this scenario must not create or modify cloud resources.
+name: "deploy-preview"
+command: "azd deploy --preview --no-prompt"
+cwd: "~/working/azd-agents-shared/{shared_agent_name}"
+tags: ["tier:2", "cmd:deploy", "serial-only"]
+requires: "tier2/2.00-setup-deploy-shared-agent.yaml"
+env:
+  AZURE_DEV_COLLECT_TELEMETRY: "no"
+pre:
+  - run: "test -f azure.yaml && test -d .azure"
+    name: "require the shared modern project"
+  - run: "find .azure -type f -exec sha256sum '{}' \\; | sort > preview-state-before.txt; sha256sum azure.yaml >> preview-state-before.txt"
+    name: "record project and deployment state"
+post:
+  - run: "rm -f preview-state-before.txt preview-state-after.txt"
+    name: "remove only preview comparison evidence"
+goals:
+  - "No product prompts are allowed. Wait for exit code zero and a deployment preview result for the shared hosted agent."
+  - "The shared agent uses code deployment. Confirm output explicitly reports code as unknown and explains that preview does not build, push, or upload artifacts; it must not claim an unqualified no-change result."
+  - "Confirm no deployment, package, build, upload, dependency deployment, or provisioning progress appears. A read-only comparison progress indicator is allowed and must clear when the command finishes."
+  - "Run 'azd deploy --preview --no-prompt --output json'. Confirm exit code zero and valid JSON containing provider changes and unknown fields, with code listed as unknown. No progress or other terminal text may corrupt the JSON."
+  - "Confirm neither output exposes environment values, credentials, or credential-bearing URLs."
+  - "Run \"find .azure -type f -exec sha256sum '{}' \\; | sort > preview-state-after.txt; sha256sum azure.yaml >> preview-state-after.txt; diff preview-state-before.txt preview-state-after.txt\" and confirm exit code zero. No deployment state, environment, cache, lock, or project file may be created or changed by preview."
+  - "Take a screenshot of the text and JSON preview results. Screenshot failures are observations, not product failures."
+  - "Report a finding for unexpected prompts, mutations, build/upload activity, leaked values, misleading no-change claims, or malformed JSON. Do not deploy or provision to work around failures."
